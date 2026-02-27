@@ -1,0 +1,17 @@
+{
+  "data": {
+    "raw_path": "BD_creditos (2).xlsx",
+    "processed_dir": "data/processed",
+    "processed_filename": "Base_de_datos_limpia.parquet"
+  },
+  "target": "Pago_atiempo",
+  "date_columns": [
+    "fecha_prestamo"
+  ],
+  "categorical_columns": [
+    "tipo_credito",
+    "tipo_laboral",
+    "tendencia_ingresos"
+  ],
+  "notes": "Ajusta rutas según tu sistema. El notebook usa este config.json para cargar datos."
+}
