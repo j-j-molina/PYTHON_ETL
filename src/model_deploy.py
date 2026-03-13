@@ -380,7 +380,6 @@ def create_app(model=None, meta=None, cfg=None, repo_root=None):
 
 # ──────────────────────────────────────────────────────────
 #  Generación de artefactos Docker — todo desde config.json
-# ──────────────────────────────────────────────────────────
 
 def generate_dockerfile(repo_root: Path, cfg: dict) -> None:
     """Dockerfile usando cfg.deploy.docker_image, .docker_port y cfg.paths."""

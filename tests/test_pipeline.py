@@ -40,7 +40,6 @@ from model_training import build_model, find_optimal_threshold, summarize_classi
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Fixtures compartidos
-# ─────────────────────────────────────────────────────────────────────────────
 
 CFG_MINIMAL = {
     "feature_engineering": {
@@ -52,7 +51,6 @@ CFG_MINIMAL = {
     },
     "split": {"date_col": "fecha_prestamo"},
 }
-
 
 def _make_df(n: int = 10, seed: int = 42) -> pd.DataFrame:
     """DataFrame mínimo con las columnas base del CSV."""
@@ -84,10 +82,8 @@ def _make_df(n: int = 10, seed: int = 42) -> pd.DataFrame:
         }
     )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  CrearFeaturesDerivadas
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestCrearFeaturesDerivadas:
     def setup_method(self):
@@ -174,10 +170,8 @@ class TestCrearFeaturesDerivadas:
         out = self.transformer.transform(self.df)
         assert (out["antiguedad_prestamo_dias"] >= 0).all()
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  LimpiarTendenciaIngresos
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestLimpiarTendenciaIngresos:
     VALID = ["ESTABLE", "CRECIENTE", "DECRECIENTE"]
@@ -218,10 +212,8 @@ class TestLimpiarTendenciaIngresos:
         self.transformer.transform(df)
         assert df["tendencia_ingresos"].iloc[0] == "999"
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  ImputacionSegmentada
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestImputacionSegmentada:
     def setup_method(self):
@@ -288,10 +280,8 @@ class TestImputacionSegmentada:
         out = self.transformer.transform(df)
         assert out["promedio_ingresos_datacredito"].iloc[0] == 9_999_999.0
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Winsorizar
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestWinsorizar:
     def setup_method(self):
@@ -343,10 +333,8 @@ class TestWinsorizar:
         out = transformer.transform(df)
         assert list(df.columns) == list(out.columns)
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  EliminarColumnas
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestEliminarColumnas:
     def test_elimina_columnas_existentes(self):
@@ -368,10 +356,8 @@ class TestEliminarColumnas:
         EliminarColumnas(cols_to_drop=["a"]).transform(df)
         assert "a" in df.columns
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  find_optimal_threshold
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestFindOptimalThreshold:
     def _balanced_probas(self):
@@ -400,10 +386,8 @@ class TestFindOptimalThreshold:
         thr = find_optimal_threshold(y, probas, strategy="prior")
         assert 0.0 <= thr <= 1.0
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  summarize_classification
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestSummarizeClassification:
     def _data(self):
@@ -436,10 +420,8 @@ class TestSummarizeClassification:
         result = summarize_classification(y, yp, p, model_name="test", verbose=False)
         assert 0.0 <= result["recall_mora"] <= 1.0
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  build_model
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestBuildModel:
     def _data(self):
@@ -469,10 +451,8 @@ class TestBuildModel:
         preds = estimator.predict(X_te)
         assert set(preds).issubset({0, 1})
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  HeuristicMoraModel
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestHeuristicMoraModel:
     def _df(self):
