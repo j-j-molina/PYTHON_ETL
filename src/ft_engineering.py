@@ -1,10 +1,10 @@
 """
 ft_engineering.py
-=================
+--------------------
 Primera componente del flujo MLOps — Ingeniería de Features.
 
-Sigue el patrón del profesor: cada paso de transformación es una clase
-independiente que hereda de BaseEstimator + TransformerMixin, lo que hace
+Cada paso de transformación es una clase independiente que 
+hereda de BaseEstimator + TransformerMixin, lo que hace
 todo el pipeline compatible con GridSearchCV y cross_val_score.
 
 Todo el comportamiento se controla desde config.json.
@@ -21,7 +21,7 @@ Estructura:
               ↓  temporal_split()
   ┌─────────────────────────────────────────────────────┐
   │              pipeline_ml                            │
-  │  (fit SOLO sobre train, transform sobre train+test) │
+  │  (fit sobre train, transform sobre train+test) │
   ├─────────────────────────────────────────────────────┤
   │  ColumnTransformer:                                 │
   │    numeric   → SimpleImputer(median)+StandardScaler │
@@ -264,7 +264,7 @@ class Winsorizar(BaseEstimator, TransformerMixin):
     """
     Aplica cap superior (winsorizacion) al percentil definido.
 
-    fit():      aprende los caps SOLO sobre train (evita leakage).
+    fit():      aprende los caps sobre train (evita leakage).
     transform(): aplica clip() con esos caps a cualquier conjunto.
 
     EDA: outliers IQR relevantes en salario_cliente, capital_prestado,
