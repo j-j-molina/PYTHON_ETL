@@ -3,12 +3,17 @@ ft_engineering.py
 --------------------
 Primera componente del flujo MLOps — Ingeniería de Features.
 
+<<<<<<< HEAD
 Cada paso de transformación es una clase independiente que
+=======
+Cada paso de transformación es una clase independiente que 
+>>>>>>> origin/Master
 hereda de BaseEstimator + TransformerMixin, lo que hace
 todo el pipeline compatible con GridSearchCV y cross_val_score.
 
 Todo el comportamiento se controla desde config.json.
 
+<<<<<<< HEAD
 Estructura (corregida para evitar data leakage):
   ┌─────────────────────────────────────────────────────┐
   │           pipeline_stateless                        │
@@ -30,6 +35,21 @@ Estructura (corregida para evitar data leakage):
   ┌─────────────────────────────────────────────────────┐
   │           pipeline_ml                               │
   │  (fit SOLO sobre train — encoding + escalado)       │
+=======
+Estructura:
+  ┌─────────────────────────────────────────────────────┐
+  │              pipeline_basemodel                     │
+  │  (se aplica sobre el DataFrame COMPLETO, pre-split) │
+  ├─────────────────────────────────────────────────────┤
+  │  CrearFeaturesDerivadas → LimpiarTendencia →        │
+  │  ImputacionSegmentada → Winsorizar →                │
+  │  EliminarColumnas                                   │
+  └─────────────────────────────────────────────────────┘
+              ↓  temporal_split()
+  ┌─────────────────────────────────────────────────────┐
+  │              pipeline_ml                            │
+  │  (fit sobre train, transform sobre train+test) │
+>>>>>>> origin/Master
   ├─────────────────────────────────────────────────────┤
   │  ColumnTransformer:                                 │
   │    numeric   → SimpleImputer(median)+StandardScaler │
@@ -37,6 +57,7 @@ Estructura (corregida para evitar data leakage):
   │    cat_ord   → SimpleImputer(mode)+OrdinalEncoder   │
   └─────────────────────────────────────────────────────┘
 
+<<<<<<< HEAD
 Separar los pasos stateless de los stateful es la corrección
 principal de esta versión: ImputacionSegmentada (medianas por
 tipo_laboral) y Winsorizar (caps al p99) ahora se ajustan
@@ -46,6 +67,11 @@ cualquier pipeline libre de leakage.
 Uso como módulo:
   from ft_engineering import build_features
   X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base = build_features()
+=======
+Uso como módulo:
+  from ft_engineering import build_features
+  X_train, X_test, y_train, y_test, pipeline_ml = build_features()
+>>>>>>> origin/Master
 
 Uso como script:
   python ft_engineering.py
@@ -130,9 +156,12 @@ class CrearFeaturesDerivadas(BaseEstimator, TransformerMixin):
     Es IDEMPOTENTE: si la columna ya existe no la sobreescribe,
     por lo que funciona con el CSV de 24 o de 32 columnas.
 
+<<<<<<< HEAD
     Paso SIN estado: fit() es un no-op. Seguro de aplicar sobre
     el dataset completo antes del split temporal.
 
+=======
+>>>>>>> origin/Master
     Columnas creadas:
       Ratios financieros (EDA: poder predictivo confirmado):
         ratio_cuota_salario           = cuota_pactada / salario_cliente
@@ -156,7 +185,10 @@ class CrearFeaturesDerivadas(BaseEstimator, TransformerMixin):
         self.cfg = cfg
 
     def fit(self, X: pd.DataFrame, y=None):
+<<<<<<< HEAD
         # Sin estado: no aprende ningún parámetro de los datos.
+=======
+>>>>>>> origin/Master
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -170,7 +202,11 @@ class CrearFeaturesDerivadas(BaseEstimator, TransformerMixin):
 
         sal = pd.to_numeric(X["salario_cliente"], errors="coerce").replace(0, np.nan)
 
+<<<<<<< HEAD
         # Ratios financieros (EDA: IV débil-medio, p-valor significativo)
+=======
+        # Ratios financieros
+>>>>>>> origin/Master
         self._add(X, "ratio_cuota_salario",
                   X["cuota_pactada"] / sal)
         self._add(X, "ratio_capital_salario",
@@ -200,7 +236,11 @@ class CrearFeaturesDerivadas(BaseEstimator, TransformerMixin):
         self._add(X, "antiguedad_prestamo_dias",
                   (ref_date - X[date_col]).dt.days)
 
+<<<<<<< HEAD
         # Edad bucket (OrdinalEncoder en pipeline_ml)
+=======
+        # Edad bucket
+>>>>>>> origin/Master
         self._add(
             X, "edad_bucket",
             pd.cut(X["edad_cliente"], bins=age_bins,
@@ -219,19 +259,28 @@ class CrearFeaturesDerivadas(BaseEstimator, TransformerMixin):
 
 class LimpiarTendenciaIngresos(BaseEstimator, TransformerMixin):
     """
+<<<<<<< HEAD
     EDA detectó 58 registros con valores numéricos en tendencia_ingresos.
     Reemplaza cualquier valor fuera del catálogo válido por NaN para que
     el SimpleImputer del pipeline_ml los impute por moda.
 
     Paso SIN estado: fit() es un no-op. Seguro de aplicar sobre
     el dataset completo antes del split temporal.
+=======
+    EDA detecto 58 registros con valores numericos en tendencia_ingresos.
+    Reemplaza cualquier valor fuera del catalogo valido por NaN para que
+    el SimpleImputer del pipeline_ml los impute por moda.
+>>>>>>> origin/Master
     """
 
     def __init__(self, valid_values: list):
         self.valid_values = valid_values
 
     def fit(self, X: pd.DataFrame, y=None):
+<<<<<<< HEAD
         # Sin estado: solo necesita el catálogo válido, no aprende de los datos.
+=======
+>>>>>>> origin/Master
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -247,6 +296,7 @@ class LimpiarTendenciaIngresos(BaseEstimator, TransformerMixin):
 class ImputacionSegmentada(BaseEstimator, TransformerMixin):
     """
     EDA: promedio_ingresos_datacredito tiene 27.2% de nulos y la mediana
+<<<<<<< HEAD
     difiere por tipo_laboral → imputación segmentada.
 
     Paso CON estado — debe fitearse SOLO sobre train para evitar leakage.
@@ -254,6 +304,12 @@ class ImputacionSegmentada(BaseEstimator, TransformerMixin):
     fit():       aprende las medianas por grupo sobre el conjunto de entrenamiento.
     transform(): aplica esas medianas; si el grupo no se vio en train, usa
                  la mediana global del train como fallback.
+=======
+    difiere por tipo_laboral → imputacion segmentada.
+
+    fit():      aprende las medianas por grupo SOLO sobre train.
+    transform(): aplica esas medianas, con fallback a mediana global.
+>>>>>>> origin/Master
 
     Acepta un dict {columna: columna_grupo} para ser extensible.
     """
@@ -287,6 +343,7 @@ class ImputacionSegmentada(BaseEstimator, TransformerMixin):
 
 class Winsorizar(BaseEstimator, TransformerMixin):
     """
+<<<<<<< HEAD
     Aplica cap superior (winsorización) al percentil definido.
 
     Paso CON estado — debe fitearse SOLO sobre train para evitar leakage.
@@ -299,6 +356,15 @@ class Winsorizar(BaseEstimator, TransformerMixin):
 
     EDA (cell 20): outliers IQR relevantes en salario_cliente (6.7%),
     capital_prestado (5.1%), total_otros_prestamos y cuota_pactada.
+=======
+    Aplica cap superior (winsorizacion) al percentil definido.
+
+    fit():      aprende los caps sobre train (evita leakage).
+    transform(): aplica clip() con esos caps a cualquier conjunto.
+
+    EDA: outliers IQR relevantes en salario_cliente, capital_prestado,
+    total_otros_prestamos y cuota_pactada.
+>>>>>>> origin/Master
     """
 
     def __init__(self, cols: list, quantile: float = 0.99):
@@ -327,10 +393,15 @@ class EliminarColumnas(BaseEstimator, TransformerMixin):
     """
     Elimina columnas por nombre.
     errors='ignore' evita errores si alguna columna ya no existe.
+<<<<<<< HEAD
 
     Se usa al final del pipeline_base para quitar columnas de leakage
     (puntaje, Pago_atiempo) y la columna de fecha, una vez que ya
     se han creado los features temporales derivados de ella.
+=======
+    Se usa al final del pipeline_basemodel para quitar leakage
+    (puntaje, Pago_atiempo) y la columna de fecha.
+>>>>>>> origin/Master
     """
 
     def __init__(self, cols_to_drop: list):
@@ -346,6 +417,7 @@ class EliminarColumnas(BaseEstimator, TransformerMixin):
 
 
 # ──────────────────────────────────────────────────────────
+<<<<<<< HEAD
 #  Helper: aplicar pipeline step-by-step sin check_is_fitted
 
 def apply_pipeline_steps(pipeline: Pipeline, X: pd.DataFrame) -> pd.DataFrame:
@@ -444,6 +516,30 @@ def build_pipeline_basemodel(cfg: dict) -> Pipeline:
     leakage_cols = fe_cfg["leakage_cols"]
     date_col     = cfg["split"]["date_col"]
 
+=======
+#  PIPELINE BASE
+#  Se aplica sobre el DataFrame COMPLETO (antes del split).
+#  Incluye: creacion de features, limpieza, imputacion y
+#  winsorizacion. NO incluye encoding ni escalado.
+#
+#  NOTA sobre el fit pre-split: ImputacionSegmentada y
+#  Winsorizar aprenden sobre el dataset completo por
+#  simplicidad. El split es TEMPORAL (futuro nunca
+#  contamina el pasado), lo que mitiga el riesgo.
+#  En produccion pura estos transformers deben fittearse
+#  solo sobre train.
+# ──────────────────────────────────────────────────────────
+
+def build_pipeline_basemodel(cfg: dict) -> Pipeline:
+    """Construye el pipeline base desde config.json."""
+    fe_cfg       = cfg["feature_engineering"]
+    leakage_cols = fe_cfg["leakage_cols"]
+    date_col     = cfg["split"]["date_col"]
+    event_col    = cfg["target"]["event_col"]
+
+    # mora (event_col) se mantiene hasta despues del split para
+    # poder separar X / y; se elimina en build_features() post-split.
+>>>>>>> origin/Master
     return Pipeline(steps=[
         ("crear_features",    CrearFeaturesDerivadas(cfg=cfg)),
         ("limpiar_tendencia", LimpiarTendenciaIngresos(
@@ -524,12 +620,18 @@ def temporal_split(
     date_col: str,
 ) -> tuple:
     """
+<<<<<<< HEAD
     Split TEMPORAL basado en fecha de originación.
     Corte: train <= sep-2025 / test > sep-2025.
 
     EDA: split aleatorio introduce leakage temporal por efecto de maduración.
     Los créditos más recientes tienen tasas de mora artificialmente bajas
     porque aún no han tenido tiempo de caer en mora.
+=======
+    Split TEMPORAL basado en fecha de originacion.
+    Corte: train <= sep-2025 / test > sep-2025.
+    EDA: split aleatorio introduce leakage temporal por efecto de maduracion.
+>>>>>>> origin/Master
     """
     cutoff        = cfg["split"]["train_cutoff"]
     cutoff_period = pd.Period(cutoff, freq="M")
@@ -559,6 +661,7 @@ def build_features(
     return_dataframe: bool = False,
 ) -> tuple:
     """
+<<<<<<< HEAD
     Ejecuta el pipeline completo de ingeniería de features.
 
     Flujo libre de data leakage:
@@ -575,16 +678,34 @@ def build_features(
       6. pipeline_ml.fit_transform(X_train_base)  [fit SOLO en train]
          pipeline_ml.transform(X_test_base)
          → ColumnTransformer: encoding + escalado
+=======
+    Ejecuta el pipeline completo de ingenieria de features.
+
+    Flujo:
+      1. Cargar config.json
+      2. Cargar CSV y crear target 'mora'
+      3. pipeline_basemodel.fit_transform(df_completo)
+      4. Split temporal
+      5. Separar X / y
+      6. pipeline_ml.fit(X_train) → transform(X_train, X_test)
+>>>>>>> origin/Master
 
     Args:
         csv_path:         Ruta al CSV (opcional).
         config_path:      Ruta al config.json (opcional).
+<<<<<<< HEAD
         return_dataframe: True → DataFrames con nombres de features.
                           False → arrays numpy (default).
 
     Returns:
         X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base
         donde pipeline_base está ajustado SOLO sobre train.
+=======
+        return_dataframe: True → DataFrames. False → arrays numpy.
+
+    Returns:
+        X_train, X_test, y_train, y_test, pipeline_ml
+>>>>>>> origin/Master
     """
     logger.info("=" * 60)
     logger.info("INICIO  ft_engineering.py — build_features()")
@@ -615,6 +736,7 @@ def build_features(
     logger.info("Tasa de mora: %.2f%%  (%d mora / %d total)",
                 df[event_col].mean() * 100, df[event_col].sum(), len(df))
 
+<<<<<<< HEAD
     # 3. Pasos SIN estado sobre el dataset completo
     #    (CrearFeaturesDerivadas + LimpiarTendenciaIngresos no aprenden de los datos)
     pipeline_stateless = build_pipeline_stateless(cfg)
@@ -644,6 +766,33 @@ def build_features(
     pipeline_ml = build_pipeline_ml(cfg)
     X_train = pipeline_ml.fit_transform(X_train_base)
     X_test  = pipeline_ml.transform(X_test_base)
+=======
+    # Guardar la fecha antes de que EliminarColumnas la elimine
+    fecha_original = df[date_col].copy()
+
+    # 3. Pipeline base sobre todo el dataset
+    pipeline_base = build_pipeline_basemodel(cfg)
+    df_clean = pipeline_base.fit_transform(df)
+
+    # Reincorporar fecha solo para el split temporal
+    df_clean[date_col] = fecha_original.values
+
+    # 4. Split temporal
+    train_df, test_df = temporal_split(df_clean, cfg, date_col)
+
+    # 5. Separar X / y
+    y_train = train_df[event_col].values
+    y_test  = test_df[event_col].values
+    X_train_raw = train_df.drop(columns=[event_col, date_col], errors="ignore")
+    X_test_raw  = test_df.drop(columns=[event_col, date_col],  errors="ignore")
+
+    _validate_columns(X_train_raw, cfg)
+
+    # 6. Pipeline ML: fit sobre train
+    pipeline_ml = build_pipeline_ml(cfg)
+    X_train = pipeline_ml.fit_transform(X_train_raw)
+    X_test  = pipeline_ml.transform(X_test_raw)
+>>>>>>> origin/Master
 
     try:
         feature_names = pipeline_ml.named_steps["preprocessor"].get_feature_names_out()
@@ -663,15 +812,26 @@ def build_features(
     if return_dataframe and feature_names is not None:
         X_train = pd.DataFrame(X_train, columns=feature_names)
         X_test  = pd.DataFrame(X_test,  columns=feature_names)
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> origin/Master
     logger.info("=" * 60)
     logger.info("FIN     ft_engineering.py — build_features()")
     logger.info("=" * 60)
 
+<<<<<<< HEAD
     return X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base
 
 def _validate_columns(df: pd.DataFrame, cfg: dict) -> None:
     """Valida que todas las columnas del config estén en el DataFrame."""
+=======
+    return X_train, X_test, y_train, y_test, pipeline_ml
+
+def _validate_columns(df: pd.DataFrame, cfg: dict) -> None:
+    """Valida que todas las columnas del config esten en el DataFrame."""
+>>>>>>> origin/Master
     fe_cfg   = cfg["feature_engineering"]
     expected = (
         fe_cfg["numeric_cols"]
@@ -694,7 +854,11 @@ if __name__ == "__main__":
     artifacts_dir = repo_root_main / cfg_main["paths"]["artifacts_dir"]
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
+<<<<<<< HEAD
     X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base = build_features(
+=======
+    X_train, X_test, y_train, y_test, pipeline_ml = build_features(
+>>>>>>> origin/Master
         return_dataframe=True
     )
 
@@ -706,17 +870,23 @@ if __name__ == "__main__":
     with open(artifacts_dir / "pipeline_ml.pkl", "wb") as fh:
         pickle.dump(pipeline_ml, fh)
 
+<<<<<<< HEAD
     # pipeline_base: ImputacionSegmentada + Winsorizar + EliminarColumnas
     # Ajustado SOLO sobre train — caps y medianas libres de leakage.
     with open(artifacts_dir / "pipeline_base.pkl", "wb") as fh:
         pickle.dump(pipeline_base, fh)
 
+=======
+>>>>>>> origin/Master
     logger.info("Artefactos guardados en: %s", artifacts_dir)
     logger.info("  X_train.csv  (%d filas, %d cols)", *X_train.shape)
     logger.info("  X_test.csv   (%d filas, %d cols)", *X_test.shape)
     logger.info("  y_train.csv  (%d registros)",      len(y_train))
     logger.info("  y_test.csv   (%d registros)",      len(y_test))
     logger.info("  pipeline_ml.pkl")
+<<<<<<< HEAD
     logger.info("  pipeline_base.pkl  [ajustado solo sobre train]")
+=======
+>>>>>>> origin/Master
 
 # ──────────────────────────────────────────────────────────
