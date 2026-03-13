@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Monitoreo — Logistic Regression</title>
+<style>
+  body  {font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+          margin:0;padding:24px 40px;background:#fff;color:#222;}
+  h1    {color:#1a1a2e;font-size:26px;margin-bottom:4px;}
+  h2    {border-bottom:2px solid #eee;padding-bottom:8px;color:#333;}
+  .sub  {color:#666;font-size:13px;margin-bottom:28px;}
+  .cards{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px;}
+  .card {background:#f9f9f9;border-left:4px solid #1D9E75;
+          padding:10px 16px;border-radius:6px;min-width:130px;}
+  .card .label {font-size:10px;color:#888;text-transform:uppercase;
+                 letter-spacing:.5px;}
+  .card .value {font-size:24px;font-weight:700;color:#222;}
+  table {border-collapse:collapse;width:100%;font-size:13px;}
+  th    {background:#1D9E75;color:white;padding:8px 12px;text-align:left;}
+  td    {padding:7px 12px;border-bottom:1px solid #eee;}
+  .warn {background:#fff8e1;border-left:4px solid #FFC107;
+          padding:10px 16px;border-radius:4px;font-size:13px;margin:8px 0;}
+  .ok   {background:#e8f5e9;border-left:4px solid #1D9E75;
+          padding:10px 16px;border-radius:4px;font-size:13px;margin:8px 0;}
+  .err  {background:#fdecea;border-left:4px solid #E24B4A;
+          padding:10px 16px;border-radius:4px;font-size:13px;margin:8px 0;}
+</style>
+</head>
+<body>
+<h1>🔍 Monitoreo del Modelo — Logistic Regression</h1>
+<div class="sub">
+  Referencia: train (n=9,938) &nbsp;|&nbsp;
+  Produccion: test/logs (n=50) &nbsp;|&nbsp;
+  PSI umbral: 0.2 &nbsp;|&nbsp;
+  Estado global: <span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">ALERTA</span>
+</div>
+
+<h2>1. Resumen de DataDrift</h2>
+<div class="cards">
+  <div class="card"><div class="label">PSI Score (output)</div>
+    <div class="value">0.4311</div></div>
+  <div class="card" style="border-color:#E24B4A"><div class="label">Features en Drift</div>
+    <div class="value">16</div></div>
+  <div class="card" style="border-color:#FFC107"><div class="label">Features Monitorear</div>
+    <div class="value">6</div></div>
+  <div class="card" style="border-color:#1D9E75"><div class="label">Features Estables</div>
+    <div class="value">8</div></div>
+</div>
+<div class='err'>⚠️ ALERTA: PSI del score de mora supera el umbral de 0.2. Se recomienda revisar si hay cambios en la población y considerar reentrenamiento.</div>
+
+<h2>2. PSI por Feature (top 30)</h2>
+<table>
+  <tr><th>Feature</th><th>PSI</th><th>Estado</th></tr>
+  
+        <tr>
+          <td>cat_ord__edad_bucket</td>
+          <td style="text-align:right">4.3240</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__antiguedad_prestamo_dias</td>
+          <td style="text-align:right">1.8200</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__mes_prestamo</td>
+          <td style="text-align:right">1.6543</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__pct_creditos_sectorFinanciero</td>
+          <td style="text-align:right">1.3699</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__edad_cliente</td>
+          <td style="text-align:right">0.8658</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__capital_prestado</td>
+          <td style="text-align:right">0.7488</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__total_otros_prestamos</td>
+          <td style="text-align:right">0.7282</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__salario_cliente</td>
+          <td style="text-align:right">0.7235</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>categoric__tipo_laboral_Independiente</td>
+          <td style="text-align:right">0.7022</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__cuota_pactada</td>
+          <td style="text-align:right">0.6702</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__pct_creditos_sectorReal</td>
+          <td style="text-align:right">0.6700</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__plazo_meses</td>
+          <td style="text-align:right">0.5940</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__puntaje_datacredito</td>
+          <td style="text-align:right">0.4208</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__pct_creditos_sectorCooperativo</td>
+          <td style="text-align:right">0.2747</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__promedio_ingresos_datacredito</td>
+          <td style="text-align:right">0.2274</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__creditos_sectorReal</td>
+          <td style="text-align:right">0.2230</td>
+          <td style="text-align:center"><span style="background:#E24B4A;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Drift</span></td>
+        </tr>
+        <tr>
+          <td>numeric__huella_consulta</td>
+          <td style="text-align:right">0.1772</td>
+          <td style="text-align:center"><span style="background:#FFC107;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Monitorear</span></td>
+        </tr>
+        <tr>
+          <td>categoric__tipo_credito_10</td>
+          <td style="text-align:right">0.1408</td>
+          <td style="text-align:center"><span style="background:#FFC107;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Monitorear</span></td>
+        </tr>
+        <tr>
+          <td>numeric__creditos_sectorFinanciero</td>
+          <td style="text-align:right">0.1096</td>
+          <td style="text-align:center"><span style="background:#FFC107;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Monitorear</span></td>
+        </tr>
+        <tr>
+          <td>numeric__cant_creditosvigentes</td>
+          <td style="text-align:right">0.1078</td>
+          <td style="text-align:center"><span style="background:#FFC107;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Monitorear</span></td>
+        </tr>
+        <tr>
+          <td>categoric__tipo_credito_9</td>
+          <td style="text-align:right">0.1058</td>
+          <td style="text-align:center"><span style="background:#FFC107;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Monitorear</span></td>
+        </tr>
+        <tr>
+          <td>numeric__creditos_sectorCooperativo</td>
+          <td style="text-align:right">0.1028</td>
+          <td style="text-align:center"><span style="background:#FFC107;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Monitorear</span></td>
+        </tr>
+        <tr>
+          <td>numeric__creditos_sector_total</td>
+          <td style="text-align:right">0.0480</td>
+          <td style="text-align:center"><span style="background:#1D9E75;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Estable</span></td>
+        </tr>
+        <tr>
+          <td>categoric__dia_semana_prestamo_Saturday</td>
+          <td style="text-align:right">0.0322</td>
+          <td style="text-align:center"><span style="background:#1D9E75;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Estable</span></td>
+        </tr>
+        <tr>
+          <td>categoric__dia_semana_prestamo_Wednesday</td>
+          <td style="text-align:right">0.0303</td>
+          <td style="text-align:center"><span style="background:#1D9E75;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Estable</span></td>
+        </tr>
+        <tr>
+          <td>categoric__dia_semana_prestamo_Tuesday</td>
+          <td style="text-align:right">0.0296</td>
+          <td style="text-align:center"><span style="background:#1D9E75;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Estable</span></td>
+        </tr>
+        <tr>
+          <td>numeric__anio_prestamo</td>
+          <td style="text-align:right">0.0248</td>
+          <td style="text-align:center"><span style="background:#1D9E75;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Estable</span></td>
+        </tr>
+        <tr>
+          <td>categoric__tipo_credito_6</td>
+          <td style="text-align:right">0.0232</td>
+          <td style="text-align:center"><span style="background:#1D9E75;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Estable</span></td>
+        </tr>
+        <tr>
+          <td>cat_ord__tendencia_ingresos</td>
+          <td style="text-align:right">0.0166</td>
+          <td style="text-align:center"><span style="background:#1D9E75;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Estable</span></td>
+        </tr>
+        <tr>
+          <td>categoric__dia_semana_prestamo_Sunday</td>
+          <td style="text-align:right">0.0137</td>
+          <td style="text-align:center"><span style="background:#1D9E75;color:white;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Estable</span></td>
+        </tr>
+</table>
+
+<h2>3. Evolución Temporal — Score de Mora</h2>
+<table>
+  <tr><th>window</th><th>n</th><th>score_mean</th><th>pct_pred_mora</th></tr>
+  <tr><td style='text-align:right'>Q1</td><td style='text-align:right'>13</td><td style='text-align:right'>0.4139</td><td style='text-align:right'>0.0769</td></tr><tr><td style='text-align:right'>Q2</td><td style='text-align:right'>12</td><td style='text-align:right'>0.4251</td><td style='text-align:right'>0.1667</td></tr><tr><td style='text-align:right'>Q3</td><td style='text-align:right'>12</td><td style='text-align:right'>0.4388</td><td style='text-align:right'>0.0833</td></tr><tr><td style='text-align:right'>Q4</td><td style='text-align:right'>13</td><td style='text-align:right'>0.4426</td><td style='text-align:right'>0.0769</td></tr>
+</table>
+
+<h2>4. Gráficos de Monitoreo</h2>
+<ul style="font-size:13px;color:#555;">
+  <li>monitor_psi_heatmap.png — PSI por feature</li>
+  <li>monitor_score_drift.png — Distribución del score: referencia vs producción</li>
+  <li>monitor_performance.png — Evolución del score por ventana temporal</li>
+  <li>monitor_feature_drift.png — Histogramas de features con mayor drift</li>
+</ul>
+
+<h2>5. Interpretación del PSI</h2>
+<table>
+  <tr><th>Rango PSI</th><th>Interpretación</th><th>Acción recomendada</th></tr>
+  <tr><td>&lt; 0.10</td><td>Distribución estable</td><td>No acción requerida</td></tr>
+  <tr><td>0.10 – 0.20</td><td>Cambio menor en la población</td>
+      <td>Investigar causa, monitorear de cerca</td></tr>
+  <tr><td>&gt; 0.20</td><td>Cambio significativo (drift)</td>
+      <td>Analizar features afectados, evaluar reentrenamiento</td></tr>
+</table>
+
+<h2>6. Metadatos del Monitoreo</h2>
+<table>
+  <tr><th>Parámetro</th><th>Valor</th></tr>
+  <tr><td>Modelo monitoreado</td><td>Logistic Regression</td></tr>
+  <tr><td>Tamaño referencia (train)</td><td>9,938</td></tr>
+  <tr><td>Tamaño produccion</td><td>50</td></tr>
+  <tr><td>PSI score (output)</td><td>0.4311</td></tr>
+  <tr><td>PSI threshold</td><td>0.2</td></tr>
+  <tr><td>Estado global</td><td>ALERTA</td></tr>
+  <tr><td>Features con drift (&gt;0.20)</td><td>16</td></tr>
+  <tr><td>Features a monitorear (0.10–0.20)</td><td>6</td></tr>
+</table>
+
+<hr style="border:none;border-top:1px solid #eee;margin:32px 0 16px;">
+<div style="font-size:11px;color:#aaa;">
+  Generado por model_monitoring.py — CDP Entregable 3
+</div>
+</body>
+</html>

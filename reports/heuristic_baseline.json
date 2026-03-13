@@ -1,0 +1,50 @@
+{
+  "train": {
+    "model": "HeuristicMoraModel",
+    "split": "Train",
+    "roc_auc": 0.5972,
+    "pr_auc": 0.0665,
+    "precision_mora": 0.068,
+    "recall_mora": 0.4917,
+    "f1_mora": 0.1195,
+    "accuracy": 0.6486,
+    "tn": 6209,
+    "fp": 3247,
+    "fn": 245,
+    "tp": 237,
+    "min_signals": 2
+  },
+  "test": {
+    "model": "HeuristicMoraModel",
+    "split": "Test",
+    "roc_auc": 0.4182,
+    "pr_auc": 0.0307,
+    "precision_mora": 0.0291,
+    "recall_mora": 0.2759,
+    "f1_mora": 0.0526,
+    "accuracy": 0.6509,
+    "tn": 529,
+    "fp": 267,
+    "fn": 21,
+    "tp": 8,
+    "min_signals": 2
+  },
+  "cv_summary": {
+    "accuracy": {
+      "mean": 0.6495,
+      "std": 0.0149
+    },
+    "f1": {
+      "mean": 0.1198,
+      "std": 0.0318
+    },
+    "precision": {
+      "mean": 0.0684,
+      "std": 0.0192
+    },
+    "recall": {
+      "mean": 0.4869,
+      "std": 0.0849
+    }
+  }
+}

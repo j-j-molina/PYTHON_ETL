@@ -1,0 +1,37 @@
+{
+  "deploy_timestamp": "2026-03-12T23:29:45.421150",
+  "project_code": "cdp_credito",
+  "model_name": "Logistic Regression",
+  "threshold": 0.6435696882661117,
+  "threshold_strategy": "f1",
+  "train_size": 9938,
+  "test_size": 825,
+  "train_mora_rate": 0.0485,
+  "test_mora_rate": 0.0352,
+  "feature_count": 38,
+  "train_cutoff": "2025-09",
+  "cv_recall_mean": 0.6141,
+  "cv_roc_auc_mean": 0.6915,
+  "test_roc_auc": 0.5093,
+  "gap_auc": 0.202,
+  "api_endpoints": [
+    "GET /health",
+    "GET /metrics",
+    "POST /predict"
+  ],
+  "docker_image": "cdp_credito-scoring",
+  "docker_port": 5000,
+  "api_version": "v1",
+  "batch_max_records": 10000,
+  "risk_thresholds": {
+    "_note": "Fracciones del threshold calibrado: score < bajo \u2192 Bajo, < threshold \u2192 Medio, >= threshold \u2192 Alto",
+    "bajo": 0.5,
+    "medio": 1.0
+  },
+  "paths": {
+    "model": "mlops_pipeline/artifacts/best_model.joblib",
+    "pipeline_ml": "mlops_pipeline/artifacts/pipeline_ml.pkl",
+    "logs": "mlops_pipeline/artifacts/prediction_logs.csv",
+    "deploy_summary": "mlops_pipeline/artifacts/deploy_summary.json"
+  }
+}

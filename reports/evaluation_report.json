@@ -1,0 +1,181 @@
+{
+  "model_name": "Logistic Regression",
+  "threshold": 0.6435696882661117,
+  "test_metrics": {
+    "model": "Logistic Regression",
+    "split": "Test",
+    "threshold": 0.6436,
+    "roc_auc": 0.5093,
+    "pr_auc": 0.0467,
+    "accuracy": 0.943,
+    "precision_mora": 0.05,
+    "recall_mora": 0.0345,
+    "f1_mora": 0.0408,
+    "support_mora": 29,
+    "tn": 777,
+    "fp": 19,
+    "fn": 28,
+    "tp": 1
+  },
+  "cv_metrics": {
+    "accuracy": {
+      "mean": 0.6711,
+      "std": 0.0077,
+      "scores": [
+        0.6665,
+        0.674,
+        0.6796,
+        0.6769,
+        0.6583
+      ]
+    },
+    "f1": {
+      "mean": 0.1532,
+      "std": 0.0112,
+      "scores": [
+        0.1333,
+        0.1649,
+        0.1495,
+        0.1619,
+        0.1565
+      ]
+    },
+    "precision": {
+      "mean": 0.0876,
+      "std": 0.0064,
+      "scores": [
+        0.0762,
+        0.0943,
+        0.0859,
+        0.0925,
+        0.0889
+      ]
+    },
+    "recall": {
+      "mean": 0.6141,
+      "std": 0.0512,
+      "scores": [
+        0.5312,
+        0.6598,
+        0.5773,
+        0.6458,
+        0.6562
+      ]
+    },
+    "roc_auc": {
+      "mean": 0.6915,
+      "std": 0.0393,
+      "scores": [
+        0.6204,
+        0.7313,
+        0.681,
+        0.7061,
+        0.7186
+      ]
+    }
+  },
+  "decile_analysis": [
+    {
+      "decil": 1,
+      "n": 83,
+      "n_mora": 4,
+      "score_min": 0.0318957317237868,
+      "score_max": 0.13137691201224944,
+      "score_mean": 0.10235627452118175,
+      "tasa_mora": 0.04819277108433735,
+      "tasa_mora_pct": 4.82
+    },
+    {
+      "decil": 2,
+      "n": 82,
+      "n_mora": 1,
+      "score_min": 0.13217322864484535,
+      "score_max": 0.16963246961865008,
+      "score_mean": 0.1529862068666624,
+      "tasa_mora": 0.012195121951219513,
+      "tasa_mora_pct": 1.22
+    },
+    {
+      "decil": 3,
+      "n": 83,
+      "n_mora": 3,
+      "score_min": 0.16985431601952342,
+      "score_max": 0.20964647439439768,
+      "score_mean": 0.19073470638580714,
+      "tasa_mora": 0.03614457831325301,
+      "tasa_mora_pct": 3.61
+    },
+    {
+      "decil": 4,
+      "n": 82,
+      "n_mora": 2,
+      "score_min": 0.21015553516711813,
+      "score_max": 0.23995636824884867,
+      "score_mean": 0.22509289194151674,
+      "tasa_mora": 0.024390243902439025,
+      "tasa_mora_pct": 2.44
+    },
+    {
+      "decil": 5,
+      "n": 83,
+      "n_mora": 5,
+      "score_min": 0.240005659539383,
+      "score_max": 0.27336603392632886,
+      "score_mean": 0.25692697625765437,
+      "tasa_mora": 0.060240963855421686,
+      "tasa_mora_pct": 6.02
+    },
+    {
+      "decil": 6,
+      "n": 82,
+      "n_mora": 2,
+      "score_min": 0.27375396421954146,
+      "score_max": 0.3109898391882004,
+      "score_mean": 0.2918301951627091,
+      "tasa_mora": 0.024390243902439025,
+      "tasa_mora_pct": 2.44
+    },
+    {
+      "decil": 7,
+      "n": 82,
+      "n_mora": 3,
+      "score_min": 0.3119664492469468,
+      "score_max": 0.36308537859185236,
+      "score_mean": 0.33606246419789304,
+      "tasa_mora": 0.036585365853658534,
+      "tasa_mora_pct": 3.66
+    },
+    {
+      "decil": 8,
+      "n": 83,
+      "n_mora": 5,
+      "score_min": 0.36332894678636857,
+      "score_max": 0.4336340495404143,
+      "score_mean": 0.3953788905789537,
+      "tasa_mora": 0.060240963855421686,
+      "tasa_mora_pct": 6.02
+    },
+    {
+      "decil": 9,
+      "n": 82,
+      "n_mora": 2,
+      "score_min": 0.4336790811698016,
+      "score_max": 0.49834598197863467,
+      "score_mean": 0.46718282315985465,
+      "tasa_mora": 0.024390243902439025,
+      "tasa_mora_pct": 2.44
+    },
+    {
+      "decil": 10,
+      "n": 83,
+      "n_mora": 2,
+      "score_min": 0.4986835060983464,
+      "score_max": 0.8859881420972275,
+      "score_mean": 0.5954927376467144,
+      "tasa_mora": 0.024096385542168676,
+      "tasa_mora_pct": 2.41
+    }
+  ],
+  "baseline_roc": 0.4182,
+  "gap_auc": 0.202
+}

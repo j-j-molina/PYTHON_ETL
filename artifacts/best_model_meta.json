@@ -1,0 +1,87 @@
+{
+  "model_name": "Logistic Regression",
+  "score": 0.3932,
+  "gap_auc": 0.202,
+  "threshold": 0.6435696882661117,
+  "threshold_strategy": "f1",
+  "test_metrics": {
+    "model": "Logistic Regression",
+    "split": "Test",
+    "threshold": 0.6436,
+    "roc_auc": 0.5093,
+    "pr_auc": 0.0467,
+    "accuracy": 0.943,
+    "precision_mora": 0.05,
+    "recall_mora": 0.0345,
+    "f1_mora": 0.0408,
+    "support_mora": 29,
+    "tn": 777,
+    "fp": 19,
+    "fn": 28,
+    "tp": 1,
+    "fit_time": 0.02
+  },
+  "cv_metrics": {
+    "accuracy": {
+      "mean": 0.6711,
+      "std": 0.0077,
+      "scores": [
+        0.6665,
+        0.674,
+        0.6796,
+        0.6769,
+        0.6583
+      ]
+    },
+    "f1": {
+      "mean": 0.1532,
+      "std": 0.0112,
+      "scores": [
+        0.1333,
+        0.1649,
+        0.1495,
+        0.1619,
+        0.1565
+      ]
+    },
+    "precision": {
+      "mean": 0.0876,
+      "std": 0.0064,
+      "scores": [
+        0.0762,
+        0.0943,
+        0.0859,
+        0.0925,
+        0.0889
+      ]
+    },
+    "recall": {
+      "mean": 0.6141,
+      "std": 0.0512,
+      "scores": [
+        0.5312,
+        0.6598,
+        0.5773,
+        0.6458,
+        0.6562
+      ]
+    },
+    "roc_auc": {
+      "mean": 0.6915,
+      "std": 0.0393,
+      "scores": [
+        0.6204,
+        0.7313,
+        0.681,
+        0.7061,
+        0.7186
+      ]
+    }
+  },
+  "baseline_roc": 0.4182,
+  "feature_count": 38,
+  "train_size": 9938,
+  "test_size": 825,
+  "train_mora_rate": 0.0485,
+  "test_mora_rate": 0.0352
+}

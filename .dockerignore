@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Git
+.git/
+.gitignore
+
+# Notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Datos crudos (cfg.paths.base_data_csv / train_reference_file)
+Base_de_datos.csv
+mlops_pipeline/artifacts/train_reference.csv
+
+# Reports (se generan en ejecución)
+mlops_pipeline/reports/
+
+# CI/CD
+.sonarcloud.properties
+sonar-project.properties
+Jenkinsfile
