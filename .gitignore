@@ -1,1 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
 .DS_Store
+*.log
+
+# venv
+.venv/
+*-venv/
+venv/
+
+# artifacts & reports
+artifacts/
+reports/
