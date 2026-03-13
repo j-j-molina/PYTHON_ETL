@@ -636,7 +636,7 @@ def build_features(
     #    y Winsorizar aprendían sobre el dataset completo (train + test).
     pipeline_base = build_pipeline_base(cfg)
     X_train_base = pipeline_base.fit_transform(X_train_raw)  # aprende de train
-    X_test_base  = pipeline_base.transform(X_test_raw)        # aplica parámetros de train
+    X_test_base  = apply_pipeline_steps(pipeline_base, X_test_raw)  # aplica parámetros de train
 
     _validate_columns(X_train_base, cfg)
 
