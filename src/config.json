@@ -1,31 +1,34 @@
 {
   "project_code": "cdp_credito",
-
   "paths": {
-    "base_data_csv":        "Base_de_datos.csv",
-    "artifacts_dir":        "mlops_pipeline/artifacts",
-    "reports_dir":          "mlops_pipeline/reports",
-    "logs_file":            "mlops_pipeline/artifacts/prediction_logs.csv",
-    "model_file":           "mlops_pipeline/artifacts/best_model.joblib",
-    "model_meta_file":      "mlops_pipeline/artifacts/best_model_meta.json",
+    "base_data_csv": "Base_de_datos.csv",
+    "artifacts_dir": "mlops_pipeline/artifacts",
+    "reports_dir": "mlops_pipeline/reports",
+    "logs_file": "mlops_pipeline/artifacts/prediction_logs.csv",
+    "model_file": "mlops_pipeline/artifacts/best_model.joblib",
+    "model_meta_file": "mlops_pipeline/artifacts/best_model_meta.json",
     "train_reference_file": "mlops_pipeline/artifacts/train_reference.csv",
-    "metrics_file":         "mlops_pipeline/reports/metrics_latest.json",
-    "drift_report_file":    "mlops_pipeline/reports/drift_report.csv"
+    "metrics_file": "mlops_pipeline/reports/metrics_latest.json",
+    "drift_report_file": "mlops_pipeline/reports/drift_report.csv",
+    "pipeline_ml_file": "mlops_pipeline/artifacts/pipeline_ml.pkl",
+    "deploy_summary_file": "mlops_pipeline/artifacts/deploy_summary.json",
+    "pipeline_base_file": "mlops_pipeline/artifacts/pipeline_base.pkl"
   },
-
   "target": {
-    "label_col":      "Pago_atiempo",
-    "event_col":      "mora",
+    "label_col": "Pago_atiempo",
+    "event_col": "mora",
     "positive_class": 1,
-    "description":    "mora=1 si Pago_atiempo==0 (no pagó a tiempo)."
+    "description": "mora=1 si Pago_atiempo==0 (no pagó a tiempo)."
   },
-
   "feature_engineering": {
-
-    "leakage_cols": ["puntaje", "Pago_atiempo"],
-
-    "drop_cols": ["fecha_prestamo", "mora"],
-
+    "leakage_cols": [
+      "puntaje",
+      "Pago_atiempo"
+    ],
+    "drop_cols": [
+      "fecha_prestamo",
+      "mora"
+    ],
     "numeric_cols": [
       "puntaje_datacredito",
       "huella_consulta",
@@ -52,43 +55,96 @@
       "anio_prestamo",
       "mes_prestamo"
     ],
-
     "categorical_cols": [
       "tipo_credito",
       "tipo_laboral",
       "dia_semana_prestamo"
     ],
-
     "ordinal_cols": {
-      "tendencia_ingresos": ["Decreciente", "Estable", "Creciente"],
-      "edad_bucket":        ["18-25", "26-35", "36-45", "46-55", "56-65", "66+"]
+      "tendencia_ingresos": [
+        "Decreciente",
+        "Estable",
+        "Creciente"
+      ],
+      "edad_bucket": [
+        "18-25",
+        "26-35",
+        "36-45",
+        "46-55",
+        "56-65",
+        "66+"
+      ]
     },
-
-    "winsorize_cols":     ["salario_cliente", "capital_prestado", "total_otros_prestamos", "cuota_pactada"],
+    "winsorize_cols": [
+      "salario_cliente",
+      "capital_prestado",
+      "total_otros_prestamos",
+      "cuota_pactada"
+    ],
     "winsorize_quantile": 0.99,
-
     "impute_grouped": {
       "promedio_ingresos_datacredito": "tipo_laboral"
     },
-
-    "tendencia_valid_values": ["Creciente", "Estable", "Decreciente"],
-
+    "tendencia_valid_values": [
+      "Creciente",
+      "Estable",
+      "Decreciente"
+    ],
     "derived_features": {
       "antiguedad_ref_date": "2026-02-28",
-      "edad_bucket_bins":    [18, 26, 36, 46, 56, 66, 120],
-      "edad_bucket_labels":  ["18-25", "26-35", "36-45", "46-55", "56-65", "66+"]
+      "edad_bucket_bins": [
+        18,
+        26,
+        36,
+        46,
+        56,
+        66,
+        120
+      ],
+      "edad_bucket_labels": [
+        "18-25",
+        "26-35",
+        "36-45",
+        "46-55",
+        "56-65",
+        "66+"
+      ]
     }
   },
-
   "split": {
-    "type":         "temporal",
-    "date_col":     "fecha_prestamo",
+    "type": "temporal",
+    "date_col": "fecha_prestamo",
     "train_cutoff": "2025-09",
-    "description":  "Entrenar hasta sep-2025 inclusive. Evaluar desde oct-2025 en adelante."
+    "description": "Entrenar hasta sep-2025 inclusive. Evaluar desde oct-2025 en adelante."
   },
-
+  "training": {
+    "cv_folds": 5,
+    "cv_scoring": "recall",
+    "threshold_strategy": "f1",
+    "threshold_min_precision": 0.05,
+    "_threshold_strategy_note": "Valores: 'f1' maximiza F1-mora en train | 'recall' maximiza recall con precision >= threshold_min_precision | 'prior' usa la tasa de mora del train como umbral directo.",
+    "selection_weights": {
+      "roc_auc": 0.4,
+      "pr_auc": 0.3,
+      "recall": 0.2,
+      "gap": 0.1
+    }
+  },
   "monitoring": {
     "psi_threshold": 0.2,
-    "min_rows":      200
+    "min_rows": 200
+  },
+  "deploy": {
+    "host": "127.0.0.1",
+    "port": 5000,
+    "docker_image": "cdp_credito-scoring",
+    "docker_port": 5000,
+    "api_version": "v1",
+    "risk_thresholds": {
+      "_note": "Fracciones del threshold calibrado: score < bajo → Bajo, < threshold → Medio, >= threshold → Alto",
+      "bajo": 0.5,
+      "medio": 1.0
+    },
+    "batch_max_records": 10000
   }
 }
