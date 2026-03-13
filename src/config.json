@@ -1,6 +1,5 @@
 {
   "project_code": "cdp_credito",
-<<<<<<< HEAD
   "paths": {
     "base_data_csv": "Base_de_datos.csv",
     "artifacts_dir": "mlops_pipeline/artifacts",
@@ -30,34 +29,6 @@
       "fecha_prestamo",
       "mora"
     ],
-=======
-
-  "paths": {
-    "base_data_csv":        "Base_de_datos.csv",
-    "artifacts_dir":        "mlops_pipeline/artifacts",
-    "reports_dir":          "mlops_pipeline/reports",
-    "logs_file":            "mlops_pipeline/artifacts/prediction_logs.csv",
-    "model_file":           "mlops_pipeline/artifacts/best_model.joblib",
-    "model_meta_file":      "mlops_pipeline/artifacts/best_model_meta.json",
-    "train_reference_file": "mlops_pipeline/artifacts/train_reference.csv",
-    "metrics_file":         "mlops_pipeline/reports/metrics_latest.json",
-    "drift_report_file":    "mlops_pipeline/reports/drift_report.csv"
-  },
-
-  "target": {
-    "label_col":      "Pago_atiempo",
-    "event_col":      "mora",
-    "positive_class": 1,
-    "description":    "mora=1 si Pago_atiempo==0 (no pagó a tiempo)."
-  },
-
-  "feature_engineering": {
-
-    "leakage_cols": ["puntaje", "Pago_atiempo"],
-
-    "drop_cols": ["fecha_prestamo", "mora"],
-
->>>>>>> origin/Master
     "numeric_cols": [
       "puntaje_datacredito",
       "huella_consulta",
@@ -84,16 +55,11 @@
       "anio_prestamo",
       "mes_prestamo"
     ],
-<<<<<<< HEAD
-=======
-
->>>>>>> origin/Master
     "categorical_cols": [
       "tipo_credito",
       "tipo_laboral",
       "dia_semana_prestamo"
     ],
-<<<<<<< HEAD
     "ordinal_cols": {
       "tendencia_ingresos": [
         "Decreciente",
@@ -180,39 +146,5 @@
       "medio": 1.0
     },
     "batch_max_records": 10000
-=======
-
-    "ordinal_cols": {
-      "tendencia_ingresos": ["Decreciente", "Estable", "Creciente"],
-      "edad_bucket":        ["18-25", "26-35", "36-45", "46-55", "56-65", "66+"]
-    },
-
-    "winsorize_cols":     ["salario_cliente", "capital_prestado", "total_otros_prestamos", "cuota_pactada"],
-    "winsorize_quantile": 0.99,
-
-    "impute_grouped": {
-      "promedio_ingresos_datacredito": "tipo_laboral"
-    },
-
-    "tendencia_valid_values": ["Creciente", "Estable", "Decreciente"],
-
-    "derived_features": {
-      "antiguedad_ref_date": "2026-02-28",
-      "edad_bucket_bins":    [18, 26, 36, 46, 56, 66, 120],
-      "edad_bucket_labels":  ["18-25", "26-35", "36-45", "46-55", "56-65", "66+"]
-    }
-  },
-
-  "split": {
-    "type":         "temporal",
-    "date_col":     "fecha_prestamo",
-    "train_cutoff": "2025-09",
-    "description":  "Entrenar hasta sep-2025 inclusive. Evaluar desde oct-2025 en adelante."
-  },
-
-  "monitoring": {
-    "psi_threshold": 0.2,
-    "min_rows":      200
->>>>>>> origin/Master
   }
 }

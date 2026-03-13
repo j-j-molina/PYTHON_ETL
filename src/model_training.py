@@ -91,6 +91,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 sns.set_theme(style="whitegrid", palette="muted")
 
+
 # ──────────────────────────────────────────────────────────
 #  Threshold calibration
 # ──────────────────────────────────────────────────────────
@@ -167,6 +168,7 @@ def find_optimal_threshold(
     threshold = float(np.clip(threshold, 0.01, 0.95))
     return threshold
 
+
 # ──────────────────────────────────────────────────────────
 #  summarize_classification
 # ──────────────────────────────────────────────────────────
@@ -235,6 +237,7 @@ def summarize_classification(
 
     return metrics
 
+
 # ──────────────────────────────────────────────────────────
 #  build_model
 # ──────────────────────────────────────────────────────────
@@ -302,6 +305,7 @@ def build_model(
     metrics_test["fit_time"]  = fit_time
 
     return estimator, metrics_train, metrics_test, fit_time, threshold
+
 
 # ──────────────────────────────────────────────────────────
 #  Cross-Validation sobre train  (Consistency)
@@ -514,6 +518,7 @@ def plot_cv_comparison(cv_results_list, save_path):
     plt.close()
     logger.info("CV comparison guardada: %s", save_path)
 
+
 def plot_confusion_matrices(models_data, thresholds, X_test, y_test, save_path):
     """Matrices de confusión normalizadas con threshold calibrado."""
     n    = len(models_data)
@@ -540,6 +545,7 @@ def plot_confusion_matrices(models_data, thresholds, X_test, y_test, save_path):
     plt.close()
     logger.info("Matrices confusion guardadas: %s", save_path)
 
+
 def plot_feature_importance(model, feature_names, model_name, save_path, top_n=20):
     if hasattr(model, "feature_importances_"):
         importances = model.feature_importances_
@@ -560,6 +566,7 @@ def plot_feature_importance(model, feature_names, model_name, save_path, top_n=2
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
     logger.info("Feature importance guardada: %s", save_path)
+
 
 def plot_learning_curve_best(estimator, model_name, X_train, y_train,
                               save_path, scoring="recall"):
@@ -610,6 +617,7 @@ def plot_learning_curve_best(estimator, model_name, X_train, y_train,
     plt.close()
     logger.info("Learning curve guardada: %s", save_path)
 
+
 def print_summary_table(all_metrics):
     cols = ["model", "split", "threshold", "roc_auc", "pr_auc",
             "recall_mora", "precision_mora", "f1_mora", "accuracy", "fit_time"]
@@ -618,6 +626,7 @@ def print_summary_table(all_metrics):
     )
     logger.info("\n%s", df.to_string(index=False))
     return df
+
 
 # ──────────────────────────────────────────────────────────
 #  Selección del mejor modelo
@@ -848,7 +857,7 @@ if __name__ == "__main__":
     logger.info("pipeline_ml guardado: %s", pipeline_ml_path)
 
     # Guardar pipeline_base — requerido por model_deploy.py
-    # pipeline_base viene de build_features() ajustado sobre train.
+    # pipeline_base viene de build_features() ajustado SOLO sobre train.
     # Contiene ImputacionSegmentada (medianas por tipo_laboral) y Winsorizar
     # (caps al p99), ambos calculados únicamente sobre los 9.938 registros
     # de entrenamiento — sin contaminación del conjunto de test.
@@ -909,4 +918,4 @@ if __name__ == "__main__":
     logger.info("Gap AUC           : %.4f", best["gap_auc"])
     logger.info("=" * 60)
 
-    # ──────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────
