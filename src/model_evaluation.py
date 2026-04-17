@@ -76,9 +76,7 @@ def resolve_runtime_paths(cfg_global: dict, cfg: dict) -> dict:
         "drift_report_file":    reports_dir / Path(top_paths.get("drift_report_file", "drift_report.csv")).name,
     }
     for key, derived_path in derived.items():
-        if paths.get(key) == top_paths.get(key):
-            paths[key] = str(derived_path)
-        elif key not in paths:
+        if paths.get(key) == top_paths.get(key) or key not in paths:
             paths[key] = str(derived_path)
     return paths
 
@@ -97,7 +95,7 @@ def get_event_metadata(cfg: dict) -> dict:
 # ──────────────────────────────────────────────────────────
 #  Métricas por decil
 
-def decile_analysis(y_true: np.ndarray, y_proba: np.ndarray, event_title: str = "Evento") -> pd.DataFrame:
+def decile_analysis(y_true: np.ndarray, y_proba: np.ndarray) -> pd.DataFrame:
     """
     Análisis por decil de score: tasa real del evento por decil de riesgo predicho.
     Permite validar que el modelo ordena correctamente el riesgo.
@@ -136,7 +134,7 @@ def plot_score_distribution(
     Distribución de scores (probabilidades) separados por clase real.
     Permite visualizar qué tan bien el modelo separa positivos vs negativos.
     """
-    fig, ax = plt.subplots(figsize=(9, 4))
+    _, ax = plt.subplots(figsize=(9, 4))
 
     scores_ok   = y_proba[y_true == 0]
     scores_event = y_proba[y_true == 1]
@@ -173,7 +171,7 @@ def plot_calibration(
     prob_true, prob_pred = calibration_curve(y_true, y_proba,
                                              n_bins=n_bins, strategy="quantile")
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    _, axes = plt.subplots(1, 2, figsize=(12, 4))
 
     # Reliability diagram
     ax = axes[0]
@@ -221,7 +219,7 @@ def plot_threshold_analysis(
             0.0,
         )
 
-    fig, ax = plt.subplots(figsize=(10, 4))
+    _, ax = plt.subplots(figsize=(10, 4))
     ax.plot(thresholds, precision_arr[:-1], color="#1D9E75",
             linewidth=2, label="Precision evento")
     ax.plot(thresholds, recall_arr[:-1],    color="#E24B4A",
@@ -232,12 +230,12 @@ def plot_threshold_analysis(
                linewidth=1.5, label=f"Threshold actual = {current_threshold:.3f}")
 
     # Anotar el punto actual
-    idx = np.argmin(np.abs(thresholds - current_threshold))
+    ann_idx = np.argmin(np.abs(thresholds - current_threshold))
     ax.annotate(
-        f"P={precision_arr[idx]:.2f}\nR={recall_arr[idx]:.2f}\nF1={f1_arr[idx]:.2f}",
-        xy=(current_threshold, f1_arr[idx]),
-        xytext=(current_threshold + 0.05, f1_arr[idx] + 0.1),
-        arrowprops=dict(arrowstyle="->", color="black"),
+        f"P={precision_arr[ann_idx]:.2f}\nR={recall_arr[ann_idx]:.2f}\nF1={f1_arr[ann_idx]:.2f}",
+        xy=(current_threshold, f1_arr[ann_idx]),
+        xytext=(current_threshold + 0.05, f1_arr[ann_idx] + 0.1),
+        arrowprops={"arrowstyle": "->", "color": "black"},
         fontsize=9,
     )
 
@@ -262,7 +260,7 @@ def plot_decile_chart(
     Es el gráfico que el negocio entiende mejor:
     'Los registros del decil 10 tienen X% de evento real.'
     """
-    fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+    _, axes = plt.subplots(1, 2, figsize=(13, 4))
 
     # Tasa del evento por decil
     ax = axes[0]
@@ -301,23 +299,21 @@ def plot_decile_chart(
 def plot_roc_pr_eval(
     y_true: np.ndarray,
     y_proba: np.ndarray,
-    threshold: float,
     model_name: str,
     baseline_roc: float,
     save_path: Path,
 ) -> None:
     """Curvas ROC y PR del modelo desplegado vs baseline heurístico."""
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    _, axes = plt.subplots(1, 2, figsize=(13, 5))
 
     # ROC
     fpr, tpr, _ = roc_curve(y_true, y_proba)
     auc = roc_auc_score(y_true, y_proba)
-    idx = np.argmin(np.abs(y_proba[np.argsort(y_proba)] - threshold))
 
     axes[0].plot(fpr, tpr, color="#1D9E75", linewidth=2,
                  label=f"{model_name}  (AUC={auc:.3f})")
     axes[0].plot([0, 1], [0, 1], "k--", linewidth=1,
-                 label=f"Random (AUC=0.500)")
+                 label="Random (AUC=0.500)")
     if baseline_roc > 0:
         axes[0].axhline(baseline_roc, color="#BA7517", linestyle=":",
                         linewidth=1.5, label=f"Baseline heurístico ({baseline_roc:.3f})")
@@ -354,12 +350,10 @@ def build_html_report(
     model_name:    str,
     threshold:     float,
     test_metrics:  dict,
-    cv_metrics:    dict,
-    decile_df:     pd.DataFrame,
-    train_metrics: dict,
-    baseline_roc:  float,
-    meta:          dict,
-    event_label:   str = "event",
+    cv_metrics:   dict,
+    decile_df:    pd.DataFrame,
+    baseline_roc: float,
+    meta:         dict,
 ) -> str:
     """
     Genera el HTML del dashboard de evaluación.
@@ -436,8 +430,8 @@ def build_html_report(
 <div class="sub">
   Modelo: <strong>{model_name}</strong> &nbsp;|&nbsp;
   Threshold: <strong>{threshold:.4f}</strong> &nbsp;|&nbsp;
-  Train cutoff: <strong>{meta.get('split_cutoff','2025-09')}</strong> &nbsp;|&nbsp;
-  Test: oct-2025 en adelante &nbsp;|&nbsp;
+  Train cutoff: <strong>{meta.get('split_cutoff', '')}</strong> &nbsp;|&nbsp;
+  Test: desde {meta.get('split_cutoff', '') or 'corte configurado'} en adelante &nbsp;|&nbsp;
   Features: <strong>{meta.get('feature_count', '-')}</strong>
 </div>
 
@@ -458,7 +452,7 @@ def build_html_report(
     {metric_card("Support evento (test)",   test_metrics["support_event"], "#666", "d")}
   </div>
   <div class="warn">
-    ⚠️ El test set contiene solo {test_metrics['support_event']} eventos positivos (créditos oct-2025 en adelante,
+    ⚠️ El test set contiene solo {test_metrics['support_event']} eventos positivos (créditos desde {meta.get('split_cutoff', 'corte configurado')} en adelante,
     aún sin tiempo de madurar). El indicador de desempeño más confiable es el CV sobre train.
   </div>
 ''')}
@@ -627,16 +621,6 @@ if __name__ == "__main__":
         "tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp),
     }
 
-    metrics_path = Path(paths["metrics_file"])
-    train_metrics = {}
-    if metrics_path.exists():
-        with open(metrics_path) as f:
-            all_m = json.load(f)
-        train_metrics = next(
-            (m for m in all_m if m.get("model") == model_name
-             and m.get("split") == "Train"), {}
-        )
-
     logger.info("=" * 55)
     logger.info("EVALUACION DEL MODELO DESPLEGADO — %s", model_name)
     logger.info("=" * 55)
@@ -653,7 +637,7 @@ if __name__ == "__main__":
 
     logger.info("Generando graficos de evaluacion...")
     plot_roc_pr_eval(
-        y_test, y_proba_test, threshold, model_name, baseline_roc,
+        y_test, y_proba_test, model_name, baseline_roc,
         save_path=reports_dir / "eval_roc_pr.png",
     )
     plot_score_distribution(
@@ -680,10 +664,8 @@ if __name__ == "__main__":
         test_metrics=test_metrics,
         cv_metrics=cv_metrics,
         decile_df=decile_df,
-        train_metrics=train_metrics,
         baseline_roc=baseline_roc,
         meta=meta,
-        event_label=event_label,
     )
     html_path = reports_dir / "evaluation_report.html"
     with open(html_path, "w", encoding="utf-8") as f:

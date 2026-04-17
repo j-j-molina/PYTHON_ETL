@@ -85,9 +85,7 @@ def resolve_runtime_paths(cfg_global: dict, cfg: dict) -> dict:
         "drift_report_file":    reports_dir / Path(top_paths.get("drift_report_file", "drift_report.csv")).name,
     }
     for key, derived_path in derived.items():
-        if paths.get(key) == top_paths.get(key):
-            paths[key] = str(derived_path)
-        elif key not in paths:
+        if paths.get(key) == top_paths.get(key) or key not in paths:
             paths[key] = str(derived_path)
     return paths
 
@@ -147,6 +145,7 @@ def compute_psi_all_features(
     production_df: pd.DataFrame,
     numeric_features: list[str],
     n_bins: int = 10,
+    psi_thresholds: dict = None,
 ) -> pd.DataFrame:
     """
     Calcula el PSI para todos los features numéricos.
@@ -156,10 +155,17 @@ def compute_psi_all_features(
         production_df:    DataFrame de producción.
         numeric_features: lista de columnas a evaluar.
         n_bins:           número de bins.
+        psi_thresholds:   dict con claves 'stable' y 'monitor' (valores float).
+                          Si es None usa los valores de config.monitoring.psi_thresholds
+                          o los defaults 0.10 / 0.20.
 
     Returns:
         DataFrame con columnas: feature, psi, status.
     """
+    thresholds    = psi_thresholds or {}
+    thr_stable    = float(thresholds.get("stable",  0.10))
+    thr_monitor   = float(thresholds.get("monitor", 0.20))
+
     results = []
     for feat in numeric_features:
         if feat not in reference_df.columns or feat not in production_df.columns:
@@ -173,14 +179,12 @@ def compute_psi_all_features(
 
     df = pd.DataFrame(results).sort_values("psi", ascending=False)
 
-    # Clasificar status
     def _status(psi):
-        if psi < 0.10:
+        if psi < thr_stable:
             return "Estable"
-        elif psi < 0.20:
+        if psi < thr_monitor:
             return "Monitorear"
-        else:
-            return "Drift"
+        return "Drift"
 
     df["status"] = df["psi"].apply(_status)
     return df.reset_index(drop=True)
@@ -259,25 +263,33 @@ def performance_by_window(
 # ──────────────────────────────────────────────────────────
 #  Gráficos de monitoreo
 
-def plot_psi_heatmap(psi_df: pd.DataFrame, save_path: Path, top_n: int = 25) -> None:
+def plot_psi_heatmap(
+    psi_df: pd.DataFrame,
+    save_path: Path,
+    top_n: int = 25,
+    psi_thresholds: dict = None,
+) -> None:
     """
     Heatmap de PSI por feature. Colores: verde=estable, naranja=monitorear,
     rojo=drift. Muestra los top_n features con mayor PSI.
     """
+    thresholds  = psi_thresholds or {}
+    thr_stable  = float(thresholds.get("stable",  0.10))
+    thr_monitor = float(thresholds.get("monitor", 0.20))
+
     df = psi_df.head(top_n).copy()
 
     color_map = {"Estable": "#1D9E75", "Monitorear": "#FFC107", "Drift": "#E24B4A"}
     colors = [color_map[s] for s in df["status"]]
 
-    fig, ax = plt.subplots(figsize=(10, max(4, len(df) * 0.35)))
+    _, ax = plt.subplots(figsize=(10, max(4, len(df) * 0.35)))
     bars = ax.barh(df["feature"][::-1], df["psi"][::-1],
                    color=colors[::-1], alpha=0.85, edgecolor="white")
 
-    # Líneas de umbral
-    ax.axvline(0.10, color="#FFC107", linestyle="--", linewidth=1.2,
-               label="Umbral monitoreo (0.10)")
-    ax.axvline(0.20, color="#E24B4A", linestyle="--", linewidth=1.2,
-               label="Umbral drift (0.20)")
+    ax.axvline(thr_stable,  color="#FFC107", linestyle="--", linewidth=1.2,
+               label=f"Umbral monitoreo ({thr_stable})")
+    ax.axvline(thr_monitor, color="#E24B4A", linestyle="--", linewidth=1.2,
+               label=f"Umbral drift ({thr_monitor})")
 
     for bar, val in zip(bars, df["psi"][::-1]):
         ax.text(val + 0.002, bar.get_y() + bar.get_height() / 2,
@@ -304,7 +316,7 @@ def plot_score_drift(
     Distribución del score del evento: referencia vs producción.
     Detecta visualmente el DataDrift en el output del modelo.
     """
-    fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+    _, axes = plt.subplots(1, 2, figsize=(13, 4))
 
     # Histograma comparativo
     ax = axes[0]
@@ -349,7 +361,6 @@ def plot_score_drift(
 
 def plot_performance_over_time(
     perf_df: pd.DataFrame,
-    threshold: float,
     save_path: Path,
 ) -> None:
     """
@@ -358,8 +369,8 @@ def plot_performance_over_time(
     """
     has_labels = "recall_event" in perf_df.columns
 
-    fig, axes = plt.subplots(1, 2 if has_labels else 1,
-                             figsize=(13 if has_labels else 8, 4))
+    _, axes = plt.subplots(1, 2 if has_labels else 1,
+                           figsize=(13 if has_labels else 8, 4))
     if not has_labels:
         axes = [axes]
 
@@ -422,7 +433,7 @@ def plot_feature_drift_detail(
 
     cols = 3
     rows = (n + cols - 1) // cols
-    fig, axes = plt.subplots(rows, cols, figsize=(14, rows * 3.5))
+    _, axes = plt.subplots(rows, cols, figsize=(14, rows * 3.5))
     axes = axes.flatten() if n > 1 else [axes]
 
     for i, feat in enumerate(top_drift_features[:n]):
@@ -453,14 +464,13 @@ def plot_feature_drift_detail(
 #  Reporte HTML de monitoreo
 
 def build_monitoring_html(
-    model_name:     str,
-    psi_df:         pd.DataFrame,
-    psi_score:      float,
-    perf_df:        pd.DataFrame,
-    n_ref:          int,
-    n_prod:         int,
-    psi_threshold:  float,
-    summary:        dict,
+    model_name:    str,
+    psi_df:        pd.DataFrame,
+    psi_score:     float,
+    perf_df:       pd.DataFrame,
+    n_ref:         int,
+    n_prod:        int,
+    psi_threshold: float,
 ) -> str:
 
     def status_badge(status):
@@ -493,10 +503,14 @@ def build_monitoring_html(
             cells += f"<td style='text-align:right'>{val}</td>"
         perf_rows += f"<tr>{cells}</tr>"
 
-    n_drift    = int((psi_df["status"] == "Drift").sum())
-    n_monitor  = int((psi_df["status"] == "Monitorear").sum())
-    global_status = "ALERTA" if psi_score > psi_threshold else (
-        "Monitorear" if psi_score > psi_threshold * 0.5 else "Estable")
+    n_drift   = int((psi_df["status"] == "Drift").sum())
+    n_monitor = int((psi_df["status"] == "Monitorear").sum())
+    if psi_score > psi_threshold:
+        global_status = "ALERTA"
+    elif psi_score > psi_threshold * 0.5:
+        global_status = "Monitorear"
+    else:
+        global_status = "Estable"
 
     html = f"""<!DOCTYPE html>
 <html lang="es">
@@ -631,9 +645,11 @@ if __name__ == "__main__":
     reports_dir = Path(paths["reports_dir"])
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    mon_cfg       = cfg.get("monitoring", {})
-    psi_threshold = mon_cfg.get("psi_threshold", 0.20)
-    min_rows      = mon_cfg.get("min_rows", 200)
+    mon_cfg        = cfg.get("monitoring", {})
+    psi_threshold  = mon_cfg.get("psi_threshold", 0.20)
+    psi_thresholds = mon_cfg.get("psi_thresholds", {"stable": 0.10, "monitor": 0.20})
+    psi_n_bins     = int(mon_cfg.get("psi_n_bins", 10))
+    min_rows       = mon_cfg.get("min_rows", 200)
 
     model_path = Path(paths["model_file"])
     meta_path  = Path(paths["model_meta_file"])
@@ -665,8 +681,7 @@ if __name__ == "__main__":
     reference_df = pd.read_csv(ref_path)
     logger.info("Referencia cargada: %s  shape=%s", ref_path, reference_df.shape)
 
-    ref_target_col = event_col if event_col in reference_df.columns else event_col
-    ref_feature_cols = [c for c in reference_df.columns if c != ref_target_col]
+    ref_feature_cols = [c for c in reference_df.columns if c != event_col]
     ref_scores = model.predict_proba(reference_df[ref_feature_cols])[:, 1]
 
     logs_path = Path(args.logs) if args.logs else Path(paths["logs_file"])
@@ -715,6 +730,8 @@ if __name__ == "__main__":
         reference_df[ref_feature_cols],
         production_raw[common_cols],
         numeric_features=numeric_features,
+        n_bins=psi_n_bins,
+        psi_thresholds=psi_thresholds,
     )
 
     psi_score_output = compute_psi_score(ref_scores, prod_scores)
@@ -759,13 +776,14 @@ if __name__ == "__main__":
     plot_psi_heatmap(
         psi_df,
         save_path=reports_dir / "monitor_psi_heatmap.png",
+        psi_thresholds=psi_thresholds,
     )
     plot_score_drift(
         ref_scores, prod_scores, model_name, psi_score_output,
         save_path=reports_dir / "monitor_score_drift.png",
     )
     plot_performance_over_time(
-        perf_df, threshold,
+        perf_df,
         save_path=reports_dir / "monitor_performance.png",
     )
 
@@ -799,7 +817,6 @@ if __name__ == "__main__":
         n_ref=len(reference_df),
         n_prod=len(production_raw),
         psi_threshold=psi_threshold,
-        summary=summary,
     )
     html_path = reports_dir / "monitoring_report.html"
     with open(html_path, "w", encoding="utf-8") as f:

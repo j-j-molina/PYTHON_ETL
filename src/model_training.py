@@ -124,9 +124,7 @@ def resolve_runtime_paths(cfg_global: dict, cfg: dict) -> dict:
     }
 
     for key, derived_path in derived.items():
-        if paths.get(key) == top_paths.get(key):
-            paths[key] = str(derived_path)
-        elif key not in paths:
+        if paths.get(key) == top_paths.get(key) or key not in paths:
             paths[key] = str(derived_path)
 
     return paths
@@ -393,29 +391,27 @@ def cross_validate_model(
     from sklearn.base import clone
 
     skf   = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    X_arr = X_train.values if hasattr(X_train, "values") else np.array(X_train)
+    x_arr = X_train.values if hasattr(X_train, "values") else np.array(X_train)
     y_arr = y_train if isinstance(y_train, np.ndarray) else np.array(y_train)
 
     fold_scores = {m: [] for m in ["accuracy", "f1", "precision", "recall", "roc_auc"]}
 
-    for tr_idx, val_idx in skf.split(X_arr, y_arr):
-        X_tr,  X_val = X_arr[tr_idx], X_arr[val_idx]
+    for tr_idx, val_idx in skf.split(x_arr, y_arr):
+        x_tr,  x_val = x_arr[tr_idx], x_arr[val_idx]
         y_tr,  y_val = y_arr[tr_idx], y_arr[val_idx]
 
         est = clone(estimator)
         if fit_params:
-            # Subsetear fit_params por fold (ej. sample_weight debe tener
-            # la misma longitud que y_train — se recorta al índice de train fold)
             fp = {
                 k: v[tr_idx] if (hasattr(v, "__len__") and len(v) == len(y_arr)) else v
                 for k, v in fit_params.items()
             }
-            est.fit(X_tr, y_tr, **fp)
+            est.fit(x_tr, y_tr, **fp)
         else:
-            est.fit(X_tr, y_tr)
+            est.fit(x_tr, y_tr)
 
-        y_proba_tr  = est.predict_proba(X_tr)[:, 1]
-        y_proba_val = est.predict_proba(X_val)[:, 1]
+        y_proba_tr  = est.predict_proba(x_tr)[:, 1]
+        y_proba_val = est.predict_proba(x_val)[:, 1]
 
         # Calibrar threshold sobre el fold de train (idéntico a build_model)
         thr = find_optimal_threshold(
@@ -431,6 +427,7 @@ def cross_validate_model(
         fold_scores["f1"].append(f1_score(y_val, y_pred_val, zero_division=0))
         fold_scores["accuracy"].append(accuracy_score(y_val, y_pred_val))
 
+
     results = {}
     for metric, scores in fold_scores.items():
         results[metric] = {
@@ -440,8 +437,8 @@ def cross_validate_model(
         }
 
     logger.info("-" * 60)
-    logger.info("CV StratifiedKFold(k=%d) — %s  [threshold calibrado por fold]",
-                n_splits, name)
+    logger.info("CV StratifiedKFold(k=%d) — %s  scoring='%s'  [threshold calibrado por fold]",
+                n_splits, name, scoring)
     logger.info("-" * 60)
     for metric, r in results.items():
         logger.info("  %-12s mean=%.3f  std=%.3f", metric, r["mean"], r["std"])
@@ -453,7 +450,7 @@ def cross_validate_model(
 
 def plot_roc_pr_curves(models_data, X_test, y_test, save_path):
     colors = ["#1D9E75", "#378ADD", "#BA7517", "#E24B4A"]
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    _, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     for i, md in enumerate(models_data):
         y_prob = md["estimator"].predict_proba(X_test)[:, 1]
@@ -498,7 +495,7 @@ def plot_metrics_comparison(metrics_list, save_path, event_label="event"):
     metric_labels = ["ROC-AUC", "PR-AUC", f"Recall {event_label}", f"F1 {event_label}"]
     colors        = ["#1D9E75", "#378ADD", "#BA7517", "#E24B4A"]
 
-    fig, axes = plt.subplots(1, 4, figsize=(16, 4), sharey=False)
+    _, axes = plt.subplots(1, 4, figsize=(16, 4), sharey=False)
     for ax, col, label, color in zip(axes, metric_cols, metric_labels, colors):
         vals = test_df[col].sort_values(ascending=True)
         bars = ax.barh(vals.index, vals.values, color=color, alpha=0.85, edgecolor="white")
@@ -516,7 +513,7 @@ def plot_metrics_comparison(metrics_list, save_path, event_label="event"):
     plt.close()
     logger.info("Comparacion metricas guardada: %s", save_path)
 
-def plot_cv_comparison(cv_results_list, save_path):
+def plot_cv_comparison(cv_results_list, save_path, event_label="event"):
     """
     Boxplot de CV recall por modelo — muestra consistency.
     Replica la visualización del profe extendida a todos los modelos.
@@ -527,7 +524,7 @@ def plot_cv_comparison(cv_results_list, save_path):
         data.append(cv["metrics"]["recall"]["scores"])
         labels.append(cv["model"])
 
-    fig, ax = plt.subplots(figsize=(9, 4))
+    _, ax = plt.subplots(figsize=(9, 4))
     bp = ax.boxplot(data, labels=labels, patch_artist=True, notch=False)
     colors = ["#1D9E75", "#378ADD", "#BA7517", "#E24B4A"]
     for patch, color in zip(bp["boxes"], colors):
@@ -549,7 +546,7 @@ def plot_cv_comparison(cv_results_list, save_path):
 def plot_confusion_matrices(models_data, thresholds, X_test, y_test, save_path, event_label="event"):
     """Matrices de confusión normalizadas con threshold calibrado."""
     n    = len(models_data)
-    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4))
+    _, axes = plt.subplots(1, n, figsize=(5 * n, 4))
     if n == 1:
         axes = [axes]
 
@@ -583,7 +580,7 @@ def plot_feature_importance(model, feature_names, model_name, save_path, top_n=2
         return
 
     indices = np.argsort(importances)[-top_n:]
-    fig, ax = plt.subplots(figsize=(9, max(4, top_n * 0.35)))
+    _, ax = plt.subplots(figsize=(9, max(4, top_n * 0.35)))
     ax.barh([feature_names[i] for i in indices], importances[indices],
             color="#1D9E75", alpha=0.85, edgecolor="white")
     ax.set_title(title, fontweight="bold", fontsize=12)
@@ -594,10 +591,13 @@ def plot_feature_importance(model, feature_names, model_name, save_path, top_n=2
     logger.info("Feature importance guardada: %s", save_path)
 
 def plot_learning_curve_best(estimator, model_name, X_train, y_train,
-                              save_path, scoring="recall"):
+                              save_path, scoring="recall", lc_cfg: dict = None):
     """Learning curve del mejor modelo — Consistency y Scalability."""
     from sklearn.model_selection import ShuffleSplit
-    cv = ShuffleSplit(n_splits=30, test_size=0.2, random_state=42)
+    lc_cfg   = lc_cfg or {}
+    n_splits = int(lc_cfg.get("n_splits", 30))
+    test_size = float(lc_cfg.get("test_size", 0.2))
+    cv = ShuffleSplit(n_splits=n_splits, test_size=test_size, random_state=42)
 
     train_sizes, train_scores, test_scores, fit_times, _ = learning_curve(
         estimator, X_train, y_train,
@@ -605,7 +605,7 @@ def plot_learning_curve_best(estimator, model_name, X_train, y_train,
         cv=cv, scoring=scoring, n_jobs=1, return_times=True,
     )
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    _, axes = plt.subplots(1, 2, figsize=(13, 5))
 
     # Learning curve
     ax = axes[0]
@@ -719,10 +719,13 @@ def build_model_definitions(train_cfg: dict, y_train: np.ndarray) -> list[tuple[
 
     out = []
     for spec in specs:
-        model_type = spec["type"]
-        params = spec.get("params", {})
+        model_type   = spec["type"]
+        params       = dict(spec.get("params", {}))
         fit_strategy = spec.get("fit_strategy")
-        name = spec.get("name", model_type.replace("_", " ").title())
+        name         = spec.get("name", model_type.replace("_", " ").title())
+
+        # Garantizar reproducibilidad si config no incluye random_state
+        params.setdefault("random_state", 42)
 
         if model_type == "logistic_regression":
             estimator = LogisticRegression(**params)
@@ -875,7 +878,8 @@ if __name__ == "__main__":
                             save_path=reports_dir / "comparacion_metricas.png",
                             event_label=event_label)
     plot_cv_comparison(cv_results_list,
-                       save_path=reports_dir / "cv_recall_comparison.png")
+                       save_path=reports_dir / "cv_recall_comparison.png",
+                       event_label=event_label)
     plot_confusion_matrices(models_data, thresholds, X_test, y_test,
                             save_path=reports_dir / "matrices_confusion.png")
     plot_feature_importance(best["estimator"], feature_names, best["name"],
@@ -883,7 +887,8 @@ if __name__ == "__main__":
     plot_learning_curve_best(best["estimator"], best["name"],
                              X_train, y_train,
                              save_path=reports_dir / "learning_curve_best.png",
-                             scoring=cv_scoring)
+                             scoring=cv_scoring,
+                             lc_cfg=train_cfg.get("learning_curve_config", {}))
 
     model_path = Path(paths["model_file"])
     model_path.parent.mkdir(parents=True, exist_ok=True)
