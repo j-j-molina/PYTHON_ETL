@@ -33,7 +33,7 @@ Outputs:
   reports/monitoring_report.html    → Dashboard completo de monitoreo
   reports/monitoring_report.json    → Métricas estructuradas
   reports/monitor_psi_heatmap.png   → Heatmap de PSI por feature
-  reports/monitor_score_drift.png   → Deriva del score de mora en el tiempo
+  reports/monitor_score_drift.png   → Deriva del score del evento en el tiempo
   reports/monitor_performance.png   → Métricas de performance por ventana
 
 Uso:
@@ -64,6 +64,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 sns.set_theme(style="whitegrid", palette="muted")
+
+
+def resolve_runtime_paths(cfg_global: dict, cfg: dict) -> dict:
+    top_paths = cfg_global.get("paths", {})
+    paths = dict(cfg.get("paths", {}))
+
+    artifacts_dir = Path(paths["artifacts_dir"])
+    reports_dir   = Path(paths["reports_dir"])
+
+    derived = {
+        "model_file":           artifacts_dir / Path(top_paths.get("model_file", "best_model.joblib")).name,
+        "model_meta_file":      artifacts_dir / Path(top_paths.get("model_meta_file", "best_model_meta.json")).name,
+        "train_reference_file": artifacts_dir / Path(top_paths.get("train_reference_file", "train_reference.csv")).name,
+        "logs_file":            artifacts_dir / Path(top_paths.get("logs_file", "prediction_logs.csv")).name,
+        "pipeline_ml_file":     artifacts_dir / Path(top_paths.get("pipeline_ml_file", "pipeline_ml.pkl")).name,
+        "pipeline_base_file":   artifacts_dir / Path(top_paths.get("pipeline_base_file", "pipeline_base.pkl")).name,
+        "deploy_summary_file":  artifacts_dir / Path(top_paths.get("deploy_summary_file", "deploy_summary.json")).name,
+        "metrics_file":         reports_dir / Path(top_paths.get("metrics_file", "metrics_latest.json")).name,
+        "drift_report_file":    reports_dir / Path(top_paths.get("drift_report_file", "drift_report.csv")).name,
+    }
+    for key, derived_path in derived.items():
+        if paths.get(key) == top_paths.get(key):
+            paths[key] = str(derived_path)
+        elif key not in paths:
+            paths[key] = str(derived_path)
+    return paths
+
+
+def get_event_metadata(cfg: dict) -> dict:
+    event_col = cfg["target"]["event_col"]
+    event_title = event_col.replace("_", " ").title()
+    return {
+        "event_col": event_col,
+        "event_title": event_title,
+        "score_col": f"score_{event_col}",
+        "pred_col": f"pred_{event_col}",
+        "actual_col": f"{event_col}_real",
+    }
 
 # ──────────────────────────────────────────────────────────
 #  PSI — Population Stability Index
@@ -152,15 +190,17 @@ def compute_psi_score(
     production_scores: np.ndarray,
     n_bins: int = 10,
 ) -> float:
-    """PSI sobre el score de mora (output del modelo)."""
+    """PSI sobre el score del evento (output del modelo)."""
     return compute_psi_feature(reference_scores, production_scores, n_bins=n_bins)
 
 # ──────────────────────────────────────────────────────────
 #  Métricas de performance por ventana temporal
 
 def performance_by_window(
-    logs_df:   pd.DataFrame,
+    logs_df: pd.DataFrame,
     threshold: float,
+    score_col: str,
+    actual_col: str,
     window_col: str = "window",
 ) -> pd.DataFrame:
     """
@@ -183,16 +223,16 @@ def performance_by_window(
         row = {
             "window":        window,
             "n":             len(grp),
-            "score_mean":    round(grp["score_mora"].mean(), 4),
-            "score_std":     round(grp["score_mora"].std(),  4),
-            "pct_pred_mora": round((grp["score_mora"] >= threshold).mean(), 4),
+            "score_mean":    round(grp[score_col].mean(), 4),
+            "score_std":     round(grp[score_col].std(),  4),
+            "pct_pred_event": round((grp[score_col] >= threshold).mean(), 4),
         }
         # Si hay etiquetas reales disponibles
-        if "mora_real" in grp.columns and grp["mora_real"].notna().sum() > 0:
-            labeled = grp.dropna(subset=["mora_real"])
-            y_true  = labeled["mora_real"].astype(int).values
-            y_pred  = (labeled["score_mora"] >= threshold).astype(int).values
-            y_proba = labeled["score_mora"].values
+        if actual_col in grp.columns and grp[actual_col].notna().sum() > 0:
+            labeled = grp.dropna(subset=[actual_col])
+            y_true  = labeled[actual_col].astype(int).values
+            y_pred  = (labeled[score_col] >= threshold).astype(int).values
+            y_proba = labeled[score_col].values
 
             tp = int(((y_pred == 1) & (y_true == 1)).sum())
             fp = int(((y_pred == 1) & (y_true == 0)).sum())
@@ -200,9 +240,9 @@ def performance_by_window(
             tn = int(((y_pred == 0) & (y_true == 0)).sum())
 
             row.update({
-                "tasa_mora_real": round(y_true.mean(), 4),
-                "recall_mora":    round(tp / max(tp + fn, 1), 4),
-                "precision_mora": round(tp / max(tp + fp, 1), 4),
+                "event_rate_real": round(y_true.mean(), 4),
+                "recall_event":    round(tp / max(tp + fn, 1), 4),
+                "precision_event": round(tp / max(tp + fp, 1), 4),
                 "tp": tp, "fp": fp, "fn": fn, "tn": tn,
                 "n_labeled": len(labeled),
             })
@@ -261,7 +301,7 @@ def plot_score_drift(
     save_path: Path,
 ) -> None:
     """
-    Distribución del score de mora: referencia vs producción.
+    Distribución del score del evento: referencia vs producción.
     Detecta visualmente el DataDrift en el output del modelo.
     """
     fig, axes = plt.subplots(1, 2, figsize=(13, 4))
@@ -272,7 +312,7 @@ def plot_score_drift(
             label=f"Referencia (train, n={len(ref_scores):,})", density=True)
     ax.hist(prod_scores, bins=30, alpha=0.6, color="#E24B4A",
             label=f"Produccion (test, n={len(prod_scores):,})", density=True)
-    ax.set_xlabel("Score de mora")
+    ax.set_xlabel("Score del evento")
     ax.set_ylabel("Densidad")
     ax.set_title(f"Distribución del Score — PSI={psi_score:.4f}",
                  fontweight="bold", fontsize=11)
@@ -316,7 +356,7 @@ def plot_performance_over_time(
     Evolución de métricas de performance por ventana temporal.
     Permite detectar degradación gradual del modelo en producción.
     """
-    has_labels = "recall_mora" in perf_df.columns
+    has_labels = "recall_event" in perf_df.columns
 
     fig, axes = plt.subplots(1, 2 if has_labels else 1,
                              figsize=(13 if has_labels else 8, 4))
@@ -333,10 +373,10 @@ def plot_performance_over_time(
         perf_df["score_mean"] + perf_df["score_std"],
         alpha=0.2, color="#1D9E75",
     )
-    ax.bar(perf_df["window"].astype(str), perf_df["pct_pred_mora"],
-           alpha=0.3, color="#E24B4A", label="% pred mora")
+    ax.bar(perf_df["window"].astype(str), perf_df["pct_pred_event"],
+           alpha=0.3, color="#E24B4A", label="% pred evento")
     ax.set_xlabel("Ventana")
-    ax.set_ylabel("Score / % predicho mora")
+    ax.set_ylabel("Score / % predicho evento")
     ax.set_title("Evolución del Score de Mora", fontweight="bold", fontsize=11)
     ax.tick_params(axis="x", rotation=30)
     ax.legend()
@@ -347,10 +387,10 @@ def plot_performance_over_time(
         if "roc_auc" in perf_df.columns:
             ax.plot(perf_df["window"].astype(str), perf_df["roc_auc"],
                     "o-", color="#1D9E75", linewidth=2, label="ROC-AUC")
-        ax.plot(perf_df["window"].astype(str), perf_df["recall_mora"],
-                "s-", color="#E24B4A", linewidth=2, label="Recall mora")
-        ax.plot(perf_df["window"].astype(str), perf_df["precision_mora"],
-                "^-", color="#378ADD", linewidth=2, label="Precision mora")
+        ax.plot(perf_df["window"].astype(str), perf_df["recall_event"],
+                "s-", color="#E24B4A", linewidth=2, label="Recall evento")
+        ax.plot(perf_df["window"].astype(str), perf_df["precision_event"],
+                "^-", color="#378ADD", linewidth=2, label="Precision evento")
         ax.set_ylim(0, 1)
         ax.set_xlabel("Ventana")
         ax.set_ylabel("Score")
@@ -441,9 +481,9 @@ def build_monitoring_html(
         </tr>"""
 
     # Tabla de performance
-    perf_cols = ["window", "n", "score_mean", "pct_pred_mora"]
-    if "recall_mora" in perf_df.columns:
-        perf_cols += ["tasa_mora_real", "recall_mora", "precision_mora"]
+    perf_cols = ["window", "n", "score_mean", "pct_pred_event"]
+    if "recall_event" in perf_df.columns:
+        perf_cols += ["event_rate_real", "recall_event", "precision_event"]
     perf_header = "".join(f"<th>{c}</th>" for c in perf_cols)
     perf_rows = ""
     for _, row in perf_df.iterrows():
@@ -506,9 +546,9 @@ def build_monitoring_html(
   <div class="card" style="border-color:#1D9E75"><div class="label">Features Estables</div>
     <div class="value">{int((psi_df["status"] == "Estable").sum())}</div></div>
 </div>
-{"<div class='err'>⚠️ ALERTA: PSI del score de mora supera el umbral de " + str(psi_threshold) + ". Se recomienda revisar si hay cambios en la población y considerar reentrenamiento.</div>"
+{"<div class='err'>⚠️ ALERTA: PSI del score del evento supera el umbral de " + str(psi_threshold) + ". Se recomienda revisar si hay cambios en la población y considerar reentrenamiento.</div>"
  if psi_score > psi_threshold else
- "<div class='ok'>✅ El score de mora no presenta drift significativo respecto al periodo de entrenamiento.</div>"}
+ "<div class='ok'>✅ El score del evento no presenta drift significativo respecto al periodo de entrenamiento.</div>"}
 
 <h2>2. PSI por Feature (top 30)</h2>
 <table>
@@ -564,30 +604,39 @@ def build_monitoring_html(
 # ──────────────────────────────────────────────────────────
 #  Ejecución principal
 
+
 if __name__ == "__main__":
     import sys
 
     parser = argparse.ArgumentParser(description="Model monitoring — DataDrift y performance")
     parser.add_argument("--logs", type=str, default=None,
                         help="Path a prediction_logs.csv. Si no existe, usa X_test como produccion.")
+    parser.add_argument(
+        "--use-case", type=str, dest="use_case", required=True,
+        help="Caso de uso definido en config.json > use_cases.",
+    )
+    parser.add_argument(
+        "--config", type=str, default=None,
+        help="Ruta opcional a config.json.",
+    )
     args = parser.parse_args()
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from ft_engineering import build_features, load_config
+    from ft_engineering import build_features, load_config, resolve_cfg
 
-    # ── Config ────────────────────────────────────────────
-    cfg, repo_root = load_config()
-    artifacts_dir  = repo_root / cfg["paths"]["artifacts_dir"]
-    reports_dir    = repo_root / cfg["paths"]["reports_dir"]
+    cfg_global, _ = load_config(Path(args.config) if args.config else None)
+    cfg = resolve_cfg(cfg_global, args.use_case)
+    paths = resolve_runtime_paths(cfg_global, cfg)
+
+    reports_dir = Path(paths["reports_dir"])
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     mon_cfg       = cfg.get("monitoring", {})
     psi_threshold = mon_cfg.get("psi_threshold", 0.20)
     min_rows      = mon_cfg.get("min_rows", 200)
 
-    # ── Cargar modelo desplegado ──────────────────────────
-    model_path = repo_root / cfg["paths"]["model_file"]
-    meta_path  = repo_root / cfg["paths"]["model_meta_file"]
+    model_path = Path(paths["model_file"])
+    meta_path  = Path(paths["model_meta_file"])
 
     if not model_path.exists():
         raise FileNotFoundError(
@@ -599,10 +648,15 @@ if __name__ == "__main__":
 
     model_name = meta["model_name"]
     threshold  = meta["threshold"]
-    logger.info("Modelo: %s | Threshold: %.4f", model_name, threshold)
+    event_meta = get_event_metadata(cfg)
+    event_col  = meta.get("event_col", event_meta["event_col"])
+    score_col  = event_meta["score_col"]
+    pred_col   = event_meta["pred_col"]
+    actual_col = event_meta["actual_col"]
+    logger.info("Modelo: %s | Threshold: %.4f | use_case=%s",
+                model_name, threshold, args.use_case)
 
-    # ── Cargar dataset de referencia (train) ──────────────
-    ref_path = repo_root / cfg["paths"]["train_reference_file"]
+    ref_path = Path(paths["train_reference_file"])
     if not ref_path.exists():
         raise FileNotFoundError(
             f"Dataset de referencia no encontrado: {ref_path}. "
@@ -611,30 +665,27 @@ if __name__ == "__main__":
     reference_df = pd.read_csv(ref_path)
     logger.info("Referencia cargada: %s  shape=%s", ref_path, reference_df.shape)
 
-    # Score de mora en referencia (train)
-    ref_feature_cols = [c for c in reference_df.columns if c != "mora"]
+    ref_target_col = event_col if event_col in reference_df.columns else event_col
+    ref_feature_cols = [c for c in reference_df.columns if c != ref_target_col]
     ref_scores = model.predict_proba(reference_df[ref_feature_cols])[:, 1]
 
-    # ── Cargar datos de producción ────────────────────────
-    logs_path = Path(args.logs) if args.logs else (
-        repo_root / cfg["paths"]["logs_file"]
-    )
+    logs_path = Path(args.logs) if args.logs else Path(paths["logs_file"])
 
     if logs_path.exists():
-        # Producción real desde prediction_logs.csv
         logger.info("Cargando logs de produccion: %s", logs_path)
         production_raw = pd.read_csv(logs_path)
-        has_logs = True
     else:
-        # Fallback: usar X_test como proxy de producción
         logger.warning(
             "prediction_logs.csv no encontrado. "
             "Usando X_test como proxy de produccion."
         )
-        X_train, X_test, y_train, y_test, _, _ = build_features(return_dataframe=True)
+        X_train, X_test, y_train, y_test, _, _ = build_features(
+            use_case=args.use_case,
+            config_path=Path(args.config) if args.config else None,
+            return_dataframe=True,
+        )
         production_raw = X_test.copy()
-        production_raw["mora_real"] = np.asarray(y_test)
-        has_logs = False
+        production_raw[actual_col] = np.asarray(y_test)
 
     logger.info("Produccion: shape=%s", production_raw.shape)
 
@@ -645,16 +696,13 @@ if __name__ == "__main__":
             len(production_raw), min_rows,
         )
 
-    # ── Score de producción ───────────────────────────────
     prod_feature_cols = [c for c in production_raw.columns
-                         if c not in ("mora", "mora_real", "score_mora",
-                                      "pred_mora", "fecha_prediccion", "window")]
-    # Asegurar que coincidan las columnas con la referencia
+                         if c not in (event_col, actual_col, score_col,
+                                      pred_col, "fecha_prediccion", "window")]
     common_cols = [c for c in ref_feature_cols if c in prod_feature_cols]
     prod_scores = model.predict_proba(production_raw[common_cols])[:, 1]
-    production_raw["score_mora"] = prod_scores
+    production_raw[score_col] = prod_scores
 
-    # ── PSI — DataDrift ───────────────────────────────────
     logger.info("=" * 55)
     logger.info("CALCULO DE PSI — DataDrift")
     logger.info("=" * 55)
@@ -683,12 +731,10 @@ if __name__ == "__main__":
     logger.info("\nTop 10 features por PSI:\n%s",
                 psi_df.head(10).to_string(index=False))
 
-    # ── Performance por ventana ───────────────────────────
     logger.info("=" * 55)
     logger.info("PERFORMANCE POR VENTANA TEMPORAL")
     logger.info("=" * 55)
 
-    # Crear ventana mensual si hay fecha, sino dividir en cuartos artificiales
     if "mes_prestamo" in production_raw.columns and "anio_prestamo" in production_raw.columns:
         production_raw["window"] = (
             production_raw["anio_prestamo"].astype(str) + "-"
@@ -700,15 +746,14 @@ if __name__ == "__main__":
             labels=["Q1", "Q2", "Q3", "Q4"],
         ).astype(str)
 
-    perf_df = performance_by_window(production_raw, threshold)
+    perf_df = performance_by_window(production_raw, threshold, score_col=score_col, actual_col=actual_col)
     logger.info("\n%s", perf_df.to_string(index=False))
 
-    # ── Guardar drift_report.csv ──────────────────────────
-    drift_path = reports_dir / "drift_report.csv"
+    drift_path = Path(paths["drift_report_file"])
+    drift_path.parent.mkdir(parents=True, exist_ok=True)
     psi_df.to_csv(drift_path, index=False)
     logger.info("drift_report.csv guardado: %s", drift_path)
 
-    # ── Gráficos ──────────────────────────────────────────
     logger.info("Generando graficos de monitoreo...")
 
     plot_psi_heatmap(
@@ -733,16 +778,17 @@ if __name__ == "__main__":
             save_path=reports_dir / "monitor_feature_drift.png",
         )
 
-    # ── Reporte HTML ──────────────────────────────────────
     summary = {
-        "model_name":   model_name,
-        "psi_score":    psi_score_output,
-        "psi_threshold": psi_threshold,
+        "use_case":       args.use_case,
+        "event_col":      event_col,
+        "model_name":     model_name,
+        "psi_score":      psi_score_output,
+        "psi_threshold":  psi_threshold,
         "n_features_drift":   n_drift,
         "n_features_monitor": n_monitor,
         "n_features_stable":  n_stable,
-        "n_reference":  len(reference_df),
-        "n_production": len(production_raw),
+        "n_reference":    len(reference_df),
+        "n_production":   len(production_raw),
     }
 
     html = build_monitoring_html(
@@ -760,10 +806,9 @@ if __name__ == "__main__":
         f.write(html)
     logger.info("Reporte HTML guardado: %s", html_path)
 
-    # ── Reporte JSON ──────────────────────────────────────
     monitor_json = {
         **summary,
-        "psi_by_feature":   psi_df.to_dict(orient="records"),
+        "psi_by_feature":      psi_df.to_dict(orient="records"),
         "performance_windows": perf_df.to_dict(orient="records"),
     }
     json_path = reports_dir / "monitoring_report.json"
@@ -771,10 +816,10 @@ if __name__ == "__main__":
         json.dump(monitor_json, f, indent=2)
     logger.info("Reporte JSON guardado: %s", json_path)
 
-    # ── Resumen final ─────────────────────────────────────
     logger.info("=" * 55)
     logger.info("MONITOREO COMPLETADO")
     logger.info("=" * 55)
+    logger.info("use_case        : %s", args.use_case)
     logger.info("Modelo          : %s", model_name)
     logger.info("PSI output      : %.4f  (%s)",
                 psi_score_output,
