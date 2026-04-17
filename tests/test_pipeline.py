@@ -11,7 +11,7 @@ Cobertura:
 
 Ejecutar:
   cd mlops_pipeline
-  pytest tests/ --cov=src --cov-report=xml:../coverage.xml -v
+  pytest tests/ --cov=src --cov-report=xml:coverage.xml -v
 """
 
 from __future__ import annotations
@@ -278,7 +278,7 @@ class TestImputacionSegmentada:
             }
         )
         out = self.transformer.transform(df)
-        assert out["promedio_ingresos_datacredito"].iloc[0] == 9_999_999.0
+        assert out["promedio_ingresos_datacredito"].iloc[0] == pytest.approx(9_999_999.0)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Winsorizar
@@ -432,23 +432,23 @@ class TestBuildModel:
         return X[:80], y[:80], X[80:], y[80:]
 
     def test_retorna_tupla(self):
-        X_tr, y_tr, X_te, y_te = self._data()
-        result = build_model("lr_test", LogisticRegression(max_iter=200),
-                             X_tr, y_tr, X_te, y_te)
+        x_tr, y_tr, x_te, y_te = self._data()
+        result = build_model("lr_test", LogisticRegression(max_iter=200, random_state=42),
+                             x_tr, y_tr, x_te, y_te)
         assert isinstance(result, tuple)
 
     def test_estimador_puede_predecir(self):
-        X_tr, y_tr, X_te, y_te = self._data()
-        estimator, *_ = build_model("lr_test", LogisticRegression(max_iter=200),
-                                    X_tr, y_tr, X_te, y_te)
-        preds = estimator.predict(X_te)
+        x_tr, y_tr, x_te, y_te = self._data()
+        estimator, *_ = build_model("lr_test", LogisticRegression(max_iter=200, random_state=42),
+                                    x_tr, y_tr, x_te, y_te)
+        preds = estimator.predict(x_te)
         assert len(preds) == len(y_te)
 
     def test_preds_son_binarias(self):
-        X_tr, y_tr, X_te, y_te = self._data()
-        estimator, *_ = build_model("lr_test", LogisticRegression(max_iter=200),
-                                    X_tr, y_tr, X_te, y_te)
-        preds = estimator.predict(X_te)
+        x_tr, y_tr, x_te, y_te = self._data()
+        estimator, *_ = build_model("lr_test", LogisticRegression(max_iter=200, random_state=42),
+                                    x_tr, y_tr, x_te, y_te)
+        preds = estimator.predict(x_te)
         assert set(preds).issubset({0, 1})
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -493,7 +493,7 @@ class TestHeuristicMoraModel:
         probas = model.predict_proba(df)
         assert probas.shape == (len(df), 2)
 
-    def test_todas_señales_activas_predice_mora(self):
+    def test_todas_senales_activas_predice_mora(self):
         """puntaje<760 + huella>5 + plazo>12 → mora=1 con min_signals=2."""
         model = HeuristicMoraModel(
             threshold_puntaje=760,
@@ -510,7 +510,7 @@ class TestHeuristicMoraModel:
         )
         assert model.predict(df)[0] == 1
 
-    def test_ninguna_señal_predice_no_mora(self):
+    def test_ninguna_senal_predice_no_mora(self):
         model = HeuristicMoraModel(
             threshold_puntaje=760,
             threshold_huella=5,

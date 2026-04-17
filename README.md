@@ -19,7 +19,7 @@ El dataset contiene **10.763 créditos** con una tasa de mora del **4.75%** — 
 ```
 mlops_pipeline/
 ├── src/
-│   ├── Cargar_datos.ipynb          # Carga exploratoria del CSV
+│   ├── Cargar_datos.py             # Carga de datos desde BigQuery o CSV local
 │   ├── comprension_eda.ipynb       # EDA completo: IV, WoE, outliers, leakage
 │   ├── ft_engineering.py           # Ingeniería de features + pipelines sklearn
 │   ├── heuristic_model.py          # Modelo heurístico baseline (reglas IV del EDA)
@@ -207,11 +207,15 @@ Todo el comportamiento del pipeline está centralizado:
 ## Docker
 
 ```bash
-# Build (desde mlops_pipeline/)
-docker build -t cdp_credito-scoring:latest .
+# 1. Generar artefactos primero (solo la primera vez o tras reentrenar)
+bash run_pipeline.sh        # Mac/Linux
+# run_pipeline.bat          # Windows
 
-# Run
-docker run -p 5000:5000 cdp_credito-scoring:latest
+# 2. Build desde mlops_pipeline/
+docker build -t cdp_credito-scoring .
+
+# 3. Run
+docker run -p 5000:5000 cdp_credito-scoring
 
 # Health check
 curl http://localhost:5000/health
@@ -219,7 +223,7 @@ curl http://localhost:5000/health
 # Predicción batch
 curl -X POST http://localhost:5000/predict \
      -H "Content-Type: application/json" \
-     -d '{"records": [{"capital_prestado": 2000000, "plazo_meses": 24, ...}]}'
+     -d '[{"capital_prestado": 2000000, "plazo_meses": 24}]'
 ```
 
 ---

@@ -118,6 +118,66 @@ def load_config(config_path: Optional[Path] = None) -> tuple[dict, Path]:
     logger.info("config.json cargado: %s", path)
     return cfg, repo_root
 
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Merge recursivo: los valores de override ganan en conflicto."""
+    import copy
+    result = copy.deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def resolve_cfg(cfg: dict, use_case: str) -> dict:
+    """
+    Construye la configuración efectiva para un caso de uso específico.
+
+    Estrategia de resolución (de menor a mayor precedencia):
+      1. Secciones globales del config.json base
+         (feature_engineering, split, target, paths, training, monitoring, deploy)
+      2. Overrides declarados en config['use_cases'][use_case]
+         (cualquier sección que el caso de uso quiera sobreescribir)
+
+    Esto permite que:
+      - scoring_mora use sus propias features, target y cutoff.
+      - scoring_fraude defina features y target completamente distintos.
+      - Ambos coexistan en el mismo config.json sin conflicto.
+      - Los pipeline builders (build_pipeline_base, build_pipeline_ml, etc.)
+        reciban siempre un cfg con la estructura esperada — no se modifican.
+
+    Ejemplo de uso en config.json para un segundo caso de uso:
+        "use_cases": {
+            "scoring_mora": {
+                "feature_engineering": { ... },
+                "target": { "label_col": "Pago_atiempo", ... },
+                "split":  { "train_cutoff": "2025-09" },
+                "paths":  { "artifacts_dir": "mlops_pipeline/artifacts/scoring_mora" }
+            },
+            "scoring_fraude": {
+                "feature_engineering": { ... },   # features distintas
+                "target": { "label_col": "es_fraude", ... },
+                "split":  { "type": "random", "test_size": 0.2 },
+                "paths":  { "artifacts_dir": "mlops_pipeline/artifacts/scoring_fraude" }
+            }
+        }
+    """
+    use_cases = cfg.get("use_cases", {})
+    if use_case not in use_cases:
+        available = ", ".join(use_cases.keys()) if use_cases else "ninguno"
+        raise KeyError(
+            f"Caso de uso '{use_case}' no encontrado en config.json. "
+            f"Disponibles: {available}"
+        )
+
+    uc_overrides = use_cases[use_case]
+    resolved = _deep_merge(cfg, uc_overrides)
+    resolved["_use_case"] = use_case
+    logger.info("Config resuelto para use_case='%s'", use_case)
+    return resolved
+
 # ──────────────────────────────────────────────────────────
 #  TRANSFORMADORES PERSONALIZADOS
 #  Cada clase hereda BaseEstimator + TransformerMixin para
@@ -126,37 +186,32 @@ def load_config(config_path: Optional[Path] = None) -> tuple[dict, Path]:
 
 class CrearFeaturesDerivadas(BaseEstimator, TransformerMixin):
     """
-    Crea las columnas derivadas que no vienen en el CSV base.
-    Es IDEMPOTENTE: si la columna ya existe no la sobreescribe,
-    por lo que funciona con el CSV de 24 o de 32 columnas.
+    Crea columnas derivadas según lo declarado en config.json.
+    Es IDEMPOTENTE: si la columna ya existe no la sobreescribe.
 
     Paso SIN estado: fit() es un no-op. Seguro de aplicar sobre
     el dataset completo antes del split temporal.
 
-    Columnas creadas:
-      Ratios financieros (EDA: poder predictivo confirmado):
-        ratio_cuota_salario           = cuota_pactada / salario_cliente
-        ratio_capital_salario         = capital_prestado / salario_cliente
-        ratio_otros_prestamos_salario = total_otros_prestamos / salario_cliente
-        dti_aprox                     = (cuota_pactada + otros) / salario_cliente
+    Completamente genérico — no contiene ningún nombre de columna
+    hardcodeado. Todo se lee del cfg efectivo (ya resuelto por
+    resolve_cfg) bajo "feature_engineering.derived_features":
 
-      Sector crediticio:
-        creditos_sector_total         = Financiero + Cooperativo + Real
-        pct_creditos_sector*          = participacion por sector
+      ratio_features   → col = numerator / denominator
+                         "numerator_sum": [colA, colB] suma antes de dividir
+      sum_features     → col = sum(cols)
+      pct_features     → col = numerator / denominator_col (ya creada)
+      temporal_col     → año, mes, día semana, antigüedad desde ref_date
+      age_col/bins     → bucketing de cualquier variable continua
 
-      Temporales (desde fecha_prestamo):
-        anio_prestamo, mes_prestamo, dia_semana_prestamo
-        antiguedad_prestamo_dias      = (ref_date - fecha_prestamo).days
-
-      Segmentacion de edad:
-        edad_bucket  bins: 18-25, 26-35, 36-45, 46-55, 56-65, 66+
+    Para un nuevo caso de uso basta con definir su bloque en config.json
+    bajo use_cases.<nombre>.feature_engineering.derived_features.
+    No se modifica código.
     """
 
     def __init__(self, cfg: dict):
         self.cfg = cfg
 
     def fit(self, X: pd.DataFrame, y=None):
-        # Sin estado: no aprende ningún parámetro de los datos.
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -164,49 +219,52 @@ class CrearFeaturesDerivadas(BaseEstimator, TransformerMixin):
         derived  = self.cfg["feature_engineering"]["derived_features"]
         date_col = self.cfg["split"]["date_col"]
 
-        ref_date   = pd.Timestamp(derived["antiguedad_ref_date"])
-        age_bins   = derived["edad_bucket_bins"]
-        age_labels = derived["edad_bucket_labels"]
+        # --- Ratios: name = numerator / denominator ------------------
+        # "numerator_sum": [colA, colB] suma antes de dividir
+        for r in derived.get("ratio_features", []):
+            if r["name"] in X.columns:
+                continue
+            denom = pd.to_numeric(X[r["denominator"]], errors="coerce").replace(0, np.nan)
+            numer = sum(X[c] for c in r["numerator_sum"]) if "numerator_sum" in r else X[r["numerator"]]
+            X[r["name"]] = numer / denom
 
-        sal = pd.to_numeric(X["salario_cliente"], errors="coerce").replace(0, np.nan)
+        # --- Sumas: name = sum(cols) ---------------------------------
+        for s in derived.get("sum_features", []):
+            if s["name"] not in X.columns:
+                X[s["name"]] = sum(X[c] for c in s["cols"])
 
-        # Ratios financieros (EDA: IV débil-medio, p-valor significativo)
-        self._add(X, "ratio_cuota_salario",
-                  X["cuota_pactada"] / sal)
-        self._add(X, "ratio_capital_salario",
-                  X["capital_prestado"] / sal)
-        self._add(X, "ratio_otros_prestamos_salario",
-                  X["total_otros_prestamos"] / sal)
-        self._add(X, "dti_aprox",
-                  (X["cuota_pactada"] + X["total_otros_prestamos"]) / sal)
+        # --- Porcentajes sobre columna ya creada --------------------
+        for p in derived.get("pct_features", []):
+            if p["name"] not in X.columns:
+                X[p["name"]] = X[p["numerator"]] / X[p["denominator"]].replace(0, np.nan)
 
-        # Sector crediticio
-        sec_total = (X["creditos_sectorFinanciero"]
-                     + X["creditos_sectorCooperativo"]
-                     + X["creditos_sectorReal"])
-        self._add(X, "creditos_sector_total", sec_total)
-        sec_denom = sec_total.replace(0, np.nan)
-        self._add(X, "pct_creditos_sectorFinanciero",
-                  X["creditos_sectorFinanciero"] / sec_denom)
-        self._add(X, "pct_creditos_sectorCooperativo",
-                  X["creditos_sectorCooperativo"] / sec_denom)
-        self._add(X, "pct_creditos_sectorReal",
-                  X["creditos_sectorReal"] / sec_denom)
+        # --- Features temporales ------------------------------------
+        temporal_col = derived.get("temporal_col") or date_col
+        if temporal_col in X.columns:
+            if isinstance(X[temporal_col].dtype, pd.DatetimeTZDtype):
+                X[temporal_col] = X[temporal_col].dt.tz_localize(None)
 
-        # Temporales
-        self._add(X, "anio_prestamo",        X[date_col].dt.year)
-        self._add(X, "mes_prestamo",         X[date_col].dt.month)
-        self._add(X, "dia_semana_prestamo",  X[date_col].dt.day_name())
-        self._add(X, "antiguedad_prestamo_dias",
-                  (ref_date - X[date_col]).dt.days)
+            ref_date = pd.Timestamp(derived["antiguedad_ref_date"]).tz_localize(None)
 
-        # Edad bucket (OrdinalEncoder en pipeline_ml)
-        self._add(
-            X, "edad_bucket",
-            pd.cut(X["edad_cliente"], bins=age_bins,
-                   labels=age_labels, right=False)
-              .astype(str).replace("nan", np.nan),
-        )
+            self._add(X, derived.get("year_col", "anio_prestamo"), X[temporal_col].dt.year)
+            self._add(X, derived.get("month_col", "mes_prestamo"), X[temporal_col].dt.month)
+            self._add(X, derived.get("dayname_col", "dia_semana_prestamo"), X[temporal_col].dt.day_name())
+            self._add(
+                X,
+                derived.get("antiguedad_col", "antiguedad_prestamo_dias"),
+                (ref_date - X[temporal_col]).dt.days)
+
+        # --- Bucketing de variable continua -------------------------
+        age_col        = derived.get("age_col",        "edad_cliente")
+        age_bucket_col = derived.get("age_bucket_col", "edad_bucket")
+        age_bins       = derived.get("edad_bucket_bins")
+        age_labels     = derived.get("edad_bucket_labels")
+        if age_col in X.columns and age_bins and age_labels:
+            self._add(
+                X, age_bucket_col,
+                pd.cut(X[age_col], bins=age_bins, labels=age_labels, right=False)
+                  .astype(str).replace("nan", np.nan),
+            )
 
         logger.info("CrearFeaturesDerivadas: %d columnas en el DataFrame", X.shape[1])
         return X
@@ -217,31 +275,40 @@ class CrearFeaturesDerivadas(BaseEstimator, TransformerMixin):
         if col not in df.columns:
             df[col] = values
 
-class LimpiarTendenciaIngresos(BaseEstimator, TransformerMixin):
-    """
-    EDA detectó 58 registros con valores numéricos en tendencia_ingresos.
-    Reemplaza cualquier valor fuera del catálogo válido por NaN para que
-    el SimpleImputer del pipeline_ml los impute por moda.
 
-    Paso SIN estado: fit() es un no-op. Seguro de aplicar sobre
-    el dataset completo antes del split temporal.
+class LimpiarCategoricas(BaseEstimator, TransformerMixin):
+    """
+    Reemplaza por NaN valores fuera de catálogo en columnas categóricas.
+
+    Completamente genérico — opera sobre cualquier columna/catálogo
+    declarado en cfg["feature_engineering"]["categorical_cleaners"]:
+        { "columna": ["valor_valido_1", "valor_valido_2", ...] }
+
+    Reemplaza a LimpiarTendenciaIngresos (hardcodeada a una columna).
+    Para un nuevo caso de uso basta con declarar su sección en config.
+    No se modifica código.
+
+    Paso SIN estado: fit() es un no-op.
     """
 
-    def __init__(self, valid_values: list):
-        self.valid_values = valid_values
+    def __init__(self, cleaners: dict):
+        self.cleaners = cleaners
 
     def fit(self, X: pd.DataFrame, y=None):
-        # Sin estado: solo necesita el catálogo válido, no aprende de los datos.
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         X = X.copy()
-        valid = set(self.valid_values)
-        mask  = X["tendencia_ingresos"].notna() & ~X["tendencia_ingresos"].isin(valid)
-        n = int(mask.sum())
-        if n:
-            X.loc[mask, "tendencia_ingresos"] = np.nan
-            logger.info("LimpiarTendenciaIngresos: %d valores sucios → NaN", n)
+        for col, valid_values in self.cleaners.items():
+            if col not in X.columns:
+                logger.warning("LimpiarCategoricas: columna '%s' no encontrada, omitida.", col)
+                continue
+            valid = set(valid_values)
+            mask  = X[col].notna() & ~X[col].isin(valid)
+            n     = int(mask.sum())
+            if n:
+                X.loc[mask, col] = np.nan
+                logger.info("LimpiarCategoricas: '%s' — %d valores fuera de catálogo → NaN", col, n)
         return X
 
 class ImputacionSegmentada(BaseEstimator, TransformerMixin):
@@ -302,14 +369,21 @@ class Winsorizar(BaseEstimator, TransformerMixin):
     """
 
     def __init__(self, cols: list, quantile: float = 0.99):
-        self.cols     = cols
+        self.cols = cols
         self.quantile = quantile
 
     def fit(self, X: pd.DataFrame, y=None):
-        self.caps_: dict = {
-            col: float(X[col].quantile(self.quantile))
-            for col in self.cols if col in X.columns
-        }
+        self.caps_ = {}
+        for col in self.cols:
+            if col not in X.columns:
+                continue
+
+            s = pd.to_numeric(X[col], errors="coerce").astype("float64")
+            cap = s.quantile(self.quantile)
+
+            if pd.notna(cap):
+                self.caps_[col] = float(cap)
+
         logger.info("Winsorizar fit: caps aprendidos → %s", self.caps_)
         return self
 
@@ -318,8 +392,11 @@ class Winsorizar(BaseEstimator, TransformerMixin):
         for col, cap in self.caps_.items():
             if col not in X.columns:
                 continue
-            n      = int((X[col] > cap).sum())
-            X[col] = X[col].clip(upper=cap)
+
+            s = pd.to_numeric(X[col], errors="coerce").astype("float64")
+            n = int((s > cap).sum())
+            X[col] = s.clip(upper=float(cap))
+
             logger.info("Winsorizar: %-30s cap=%.2f  (%d capeados)", col, cap, n)
         return X
 
@@ -376,20 +453,17 @@ def apply_pipeline_steps(pipeline: Pipeline, X: pd.DataFrame) -> pd.DataFrame:
 
 def build_pipeline_stateless(cfg: dict) -> Pipeline:
     """
-    Construye el pipeline de pasos sin estado desde config.json.
+    Pipeline sin estado — recibe cfg ya resuelto por resolve_cfg().
 
-    Incluye:
-      - CrearFeaturesDerivadas: ratios, temporales, edad_bucket
-      - LimpiarTendenciaIngresos: reemplaza valores fuera del catálogo por NaN
-
-    Al no aprender ningún parámetro de los datos, es seguro aplicarlo
-    sobre el dataset completo antes del split temporal. No se serializa.
+    Genérico: lee todo de cfg["feature_engineering"], que puede ser
+    global o específico del caso de uso dependiendo de cómo se resolvió.
+    No se serializa (fit() es no-op en todos sus pasos).
     """
     fe_cfg = cfg["feature_engineering"]
     return Pipeline(steps=[
-        ("crear_features",    CrearFeaturesDerivadas(cfg=cfg)),
-        ("limpiar_tendencia", LimpiarTendenciaIngresos(
-            valid_values=fe_cfg["tendencia_valid_values"],
+        ("crear_features",     CrearFeaturesDerivadas(cfg=cfg)),
+        ("limpiar_categoricas", LimpiarCategoricas(
+            cleaners=fe_cfg.get("categorical_cleaners", {}),
         )),
     ])
 
@@ -411,13 +485,22 @@ def build_pipeline_base(cfg: dict) -> Pipeline:
         segmentadas por tipo_laboral (EDA: 27.2% de nulos, medianas difieren)
       - Winsorizar: cap al p99 para salario_cliente, capital_prestado,
         total_otros_prestamos, cuota_pactada (EDA cell 20: outliers IQR)
-      - EliminarColumnas: leakage_cols (puntaje, Pago_atiempo) + fecha_prestamo
+      - EliminarColumnas: leakage_cols + drop_cols + date_col
+        EDA (cell 33): saldo_mora, saldo_total, saldo_principal,
+        saldo_mora_codeudor son leakage post-evento — se eliminan aquí
+        explícitamente (antes solo caían por remainder='drop' en pipeline_ml,
+        pero eso los deja presentes durante pipeline_base, lo cual es incorrecto).
 
     Requiere fit SOLO sobre train. Se serializa como pipeline_base.pkl.
     """
     fe_cfg       = cfg["feature_engineering"]
-    leakage_cols = fe_cfg["leakage_cols"]
+    leakage_cols = fe_cfg.get("leakage_cols", [])
+    drop_cols    = fe_cfg.get("drop_cols", [])
     date_col     = cfg["split"]["date_col"]
+
+    # Unión deduplicada: leakage + drop_cols explícitos + columna de fecha
+    # dict.fromkeys preserva orden y elimina duplicados
+    all_drop = list(dict.fromkeys(leakage_cols + drop_cols + [date_col]))
 
     return Pipeline(steps=[
         ("imputacion",    ImputacionSegmentada(
@@ -428,7 +511,7 @@ def build_pipeline_base(cfg: dict) -> Pipeline:
             quantile=float(fe_cfg["winsorize_quantile"]),
         )),
         ("eliminar_cols", EliminarColumnas(
-            cols_to_drop=leakage_cols + [date_col],
+            cols_to_drop=all_drop,
         )),
     ])
 
@@ -446,8 +529,8 @@ def build_pipeline_basemodel(cfg: dict) -> Pipeline:
 
     return Pipeline(steps=[
         ("crear_features",    CrearFeaturesDerivadas(cfg=cfg)),
-        ("limpiar_tendencia", LimpiarTendenciaIngresos(
-            valid_values=fe_cfg["tendencia_valid_values"],
+        ("limpiar_categoricas", LimpiarCategoricas(
+            cleaners=fe_cfg.get("categorical_cleaners", {}),
         )),
         ("imputacion",        ImputacionSegmentada(
             impute_map=fe_cfg["impute_grouped"],
@@ -522,29 +605,66 @@ def temporal_split(
     df: pd.DataFrame,
     cfg: dict,
     date_col: str,
-) -> tuple:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Split TEMPORAL basado en fecha de originación.
-    Corte: train <= sep-2025 / test > sep-2025.
+    Split de datos. Estrategia leída de cfg["split"]["type"]:
 
-    EDA: split aleatorio introduce leakage temporal por efecto de maduración.
-    Los créditos más recientes tienen tasas de mora artificialmente bajas
-    porque aún no han tenido tiempo de caer en mora.
+      "temporal" (default recomendado para créditos):
+          train <= train_cutoff / test > train_cutoff
+          Evita leakage por efecto de maduración de cartera.
+
+      "random":
+          Split aleatorio estratificado por target.
+          Requiere cfg["split"]["test_size"] (default 0.2).
+          Útil para casos de uso sin componente temporal fuerte.
+
+    Recibe cfg ya resuelto por resolve_cfg(), por lo que cada caso de
+    uso puede definir su propia estrategia de split sin modificar código.
     """
-    cutoff        = cfg["split"]["train_cutoff"]
-    cutoff_period = pd.Period(cutoff, freq="M")
-    periods       = df[date_col].dt.to_period("M")
-    train_df = df[periods <= cutoff_period].copy()
-    test_df  = df[periods >  cutoff_period].copy()
+    from sklearn.model_selection import train_test_split
+
+    split_cfg = cfg["split"]
     event_col = cfg["target"]["event_col"]
+    split_type = split_cfg.get("type", "temporal")
+
+    if split_type == "temporal":
+        cutoff        = split_cfg["train_cutoff"]
+        cutoff_period = pd.Period(cutoff, freq="M")
+        periods       = df[date_col].dt.to_period("M")
+        train_df = df[periods <= cutoff_period].copy()
+        test_df  = df[periods >  cutoff_period].copy()
+        logger.info(
+            "Split temporal — cutoff: %s | train: %d (%.1f%%) | test: %d (%.1f%%)",
+            cutoff,
+            len(train_df), len(train_df) / len(df) * 100,
+            len(test_df),  len(test_df)  / len(df) * 100,
+        )
+
+    elif split_type == "random":
+        test_size  = float(split_cfg.get("test_size", 0.2))
+        random_state = int(split_cfg.get("random_state", 42))
+        train_df, test_df = train_test_split(
+            df,
+            test_size=test_size,
+            stratify=df[event_col],
+            random_state=random_state,
+        )
+        train_df = train_df.copy()
+        test_df  = test_df.copy()
+        logger.info(
+            "Split aleatorio — test_size: %.0f%% | train: %d | test: %d",
+            test_size * 100, len(train_df), len(test_df),
+        )
+
+    else:
+        raise ValueError(
+            f"cfg['split']['type'] no reconocido: '{split_type}'. "
+            "Valores válidos: 'temporal', 'random'."
+        )
+
     logger.info(
-        "Split temporal — cutoff: %s | train: %d (%.1f%%) | test: %d (%.1f%%)",
-        cutoff,
-        len(train_df), len(train_df) / len(df) * 100,
-        len(test_df),  len(test_df)  / len(df) * 100,
-    )
-    logger.info(
-        "Tasa mora → train: %.2f%%  |  test: %.2f%%",
+        "Tasa %s → train: %.2f%%  |  test: %.2f%%",
+        event_col,
         train_df[event_col].mean() * 100,
         test_df[event_col].mean()  * 100,
     )
@@ -553,90 +673,138 @@ def temporal_split(
 # ──────────────────────────────────────────────────────────
 #  FUNCION PRINCIPAL
 
+def load_raw_data(
+    cfg: dict,
+    use_case: str,
+    raw_path_override: Optional[Path] = None,
+) -> pd.DataFrame:
+    """
+    Carga los datos crudos producidos por Cargar_datos.py.
+
+    Recibe cfg ya resuelto por resolve_cfg(). La ruta se toma de
+    cfg["paths"]["raw_data"] (que ya fue fusionada desde el use_case).
+
+    Fallback legacy: cfg["paths"]["base_data_csv"] para compatibilidad
+    con ejecuciones que apuntan directamente al CSV original.
+
+    Soporta .parquet y .csv según extensión.
+    """
+    if raw_path_override is not None:
+        raw_path = Path(raw_path_override)
+    else:
+        raw_str = cfg["paths"].get("raw_data") or cfg["paths"].get("base_data_csv")
+        if not raw_str:
+            raise FileNotFoundError(
+                "No se encontró 'paths.raw_data' ni 'paths.base_data_csv' en config.json."
+            )
+        raw_path = Path(raw_str)
+
+    if not raw_path.exists():
+        raise FileNotFoundError(
+            f"Archivo de datos no encontrado: {raw_path}\n"
+            f"Ejecuta primero: python src/Cargar_datos.py --use-case {use_case}"
+        )
+
+    ext = raw_path.suffix.lower()
+    if ext == ".parquet":
+        df = pd.read_parquet(raw_path)
+    elif ext == ".csv":
+        df = pd.read_csv(raw_path)
+    else:
+        raise ValueError(f"Formato no soportado: '{ext}'. Usar .parquet o .csv.")
+
+    logger.info("Datos cargados: %s  |  shape: %s", raw_path, df.shape)
+    return df
+
+
 def build_features(
-    csv_path: Optional[Path] = None,
+    use_case: str = "scoring_mora",
+    raw_path: Optional[Path] = None,
     config_path: Optional[Path] = None,
     return_dataframe: bool = False,
+    return_base: bool = False,
 ) -> tuple:
     """
     Ejecuta el pipeline completo de ingeniería de features.
 
+    Resuelve la configuración efectiva del caso de uso con resolve_cfg(),
+    de modo que cada use_case puede tener su propio feature_engineering,
+    target, split y artifacts_dir sin conflicto con otros use_cases.
+
     Flujo libre de data leakage:
-      1. Cargar config.json y CSV
-      2. Crear target 'mora'
-      3. pipeline_stateless.fit_transform(df_completo)
-         → CrearFeaturesDerivadas + LimpiarTendenciaIngresos
-         → Seguro en todo el dataset (pasos sin estado)
-      4. temporal_split()  →  train / test
-      5. pipeline_base.fit_transform(X_train_raw)  [fit SOLO en train]
-         pipeline_base.transform(X_test_raw)
-         → ImputacionSegmentada + Winsorizar + EliminarColumnas
-         → Caps y medianas aprendidos ÚNICAMENTE del train
-      6. pipeline_ml.fit_transform(X_train_base)  [fit SOLO en train]
-         pipeline_ml.transform(X_test_base)
-         → ColumnTransformer: encoding + escalado
+      1. Cargar config y resolver cfg efectivo para use_case
+      2. Cargar datos crudos (.parquet o .csv)
+      3. pipeline_stateless.fit_transform(df_completo)  [pasos sin estado]
+      4. split (temporal o random según cfg["split"]["type"])
+      5. pipeline_base.fit_transform(X_train) / transform(X_test)  [solo train]
+      6. pipeline_ml.fit_transform(X_train) / transform(X_test)    [solo train]
 
     Args:
-        csv_path:         Ruta al CSV (opcional).
+        use_case:         Nombre del caso de uso en config.json > use_cases.
+        raw_path:         Ruta explícita al archivo de datos (sobreescribe config).
         config_path:      Ruta al config.json (opcional).
-        return_dataframe: True → DataFrames con nombres de features.
+        return_dataframe: True → DataFrames con nombres de columna.
                           False → arrays numpy (default).
+        return_base:      True → retorna 8 elementos incluyendo X_train_base y
+                          X_test_base (DataFrames pre-scaling, escala original).
+                          Necesario para el modelo heurístico, que aplica
+                          thresholds en la escala original de las variables.
+                          False → retorna 6 elementos (comportamiento default,
+                          compatible con versiones anteriores).
 
-    Returns:
+    Returns (return_base=False, default):
         X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base
-        donde pipeline_base está ajustado SOLO sobre train.
+
+    Returns (return_base=True):
+        X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base,
+        X_train_base, X_test_base
+        donde X_train_base / X_test_base son DataFrames en escala original
+        (salida de pipeline_base, antes de StandardScaler / OHE).
     """
     logger.info("=" * 60)
-    logger.info("INICIO  ft_engineering.py — build_features()")
+    logger.info("INICIO  ft_engineering.py — build_features() | use_case: %s", use_case)
     logger.info("=" * 60)
 
-    # 1. Config
-    cfg, repo_root = load_config(config_path)
+    # 1. Config global + resolución por use_case
+    cfg_global, repo_root = load_config(config_path)
+    cfg = resolve_cfg(cfg_global, use_case)   # cfg efectivo: global + overrides del use_case
+
     date_col  = cfg["split"]["date_col"]
     label_col = cfg["target"]["label_col"]
     event_col = cfg["target"]["event_col"]
 
-    # 2. Carga de datos
-    candidates = [
-        csv_path,
-        repo_root / cfg["paths"]["base_data_csv"],
-        repo_root / "mlops_pipeline" / "src" / cfg["paths"]["base_data_csv"],
-        Path(cfg["paths"]["base_data_csv"]),
-    ]
-    csv_found = next((p for p in candidates if p is not None and Path(p).exists()), None)
-    if csv_found is None:
-        raise FileNotFoundError(f"No se encontro {cfg['paths']['base_data_csv']}.")
-
-    df = pd.read_csv(csv_found)
-    df[date_col]  = pd.to_datetime(df[date_col], dayfirst=False, errors="coerce")
+    # 2. Carga de datos (Parquet desde Cargar_datos.py, o CSV legacy)
+    df = load_raw_data(cfg, use_case=use_case, raw_path_override=raw_path)
+    df[date_col] = pd.to_datetime(df[date_col], dayfirst=False, errors="coerce", utc=True).dt.tz_localize(None)
     df[event_col] = (df[label_col] == 0).astype(int)
 
-    logger.info("CSV cargado: %s  |  shape: %s", csv_found, df.shape)
-    logger.info("Tasa de mora: %.2f%%  (%d mora / %d total)",
-                df[event_col].mean() * 100, df[event_col].sum(), len(df))
+    logger.info("Tasa de %s: %.2f%%  (%d positivos / %d total)",
+                event_col, df[event_col].mean() * 100, df[event_col].sum(), len(df))
 
-    # 3. Pasos SIN estado sobre el dataset completo
-    #    (CrearFeaturesDerivadas + LimpiarTendenciaIngresos no aprenden de los datos)
+    # 3. Pasos SIN estado (cfg ya resuelto → builders usan features del use_case)
     pipeline_stateless = build_pipeline_stateless(cfg)
     df_pre = pipeline_stateless.fit_transform(df)
-    # df_pre conserva: fecha_prestamo, mora, todas las features derivadas
 
-    # 4. Split temporal (fecha_prestamo aún presente para el corte)
+    # 4. Split (temporal o random según cfg["split"]["type"])
     train_df, test_df = temporal_split(df_pre, cfg, date_col)
 
     # 5. Separar X / y
-    #    Mantener fecha_prestamo en X_*_raw porque pipeline_base la eliminará.
     y_train     = train_df[event_col].values
     y_test      = test_df[event_col].values
     X_train_raw = train_df.drop(columns=[event_col], errors="ignore")
     X_test_raw  = test_df.drop(columns=[event_col],  errors="ignore")
 
-    # 6. Pasos CON estado: fit SOLO sobre train, transform sobre ambos
-    #    Corrige el leakage de la versión anterior donde ImputacionSegmentada
-    #    y Winsorizar aprendían sobre el dataset completo (train + test).
+    # 6. Pasos CON estado: fit SOLO sobre train
     pipeline_base = build_pipeline_base(cfg)
-    X_train_base = pipeline_base.fit_transform(X_train_raw)  # aprende de train
-    X_test_base  = apply_pipeline_steps(pipeline_base, X_test_raw)  # aplica parámetros de train
+    X_train_base = pipeline_base.fit_transform(X_train_raw)
+    X_test_base  = apply_pipeline_steps(pipeline_base, X_test_raw)
+
+    # Conservar como DataFrames con nombres de columna para el modelo heurístico
+    # (necesita escala original; pipeline_ml aplica StandardScaler encima)
+    if not isinstance(X_train_base, pd.DataFrame):
+        X_train_base = pd.DataFrame(X_train_base)
+    if not isinstance(X_test_base, pd.DataFrame):
+        X_test_base = pd.DataFrame(X_test_base)
 
     _validate_columns(X_train_base, cfg)
 
@@ -653,9 +821,9 @@ def build_features(
         feature_names = None
 
     logger.info(
-        "X_train: %s  |  X_test: %s  |  mora train: %.2f%%  |  mora test: %.2f%%",
+        "X_train: %s  |  X_test: %s  |  %s train: %.2f%%  |  %s test: %.2f%%",
         X_train.shape, X_test.shape,
-        y_train.mean() * 100, y_test.mean() * 100,
+        event_col, y_train.mean() * 100, event_col, y_test.mean() * 100,
     )
     if feature_names is not None:
         logger.info("Features generadas: %d", len(feature_names))
@@ -665,13 +833,22 @@ def build_features(
         X_test  = pd.DataFrame(X_test,  columns=feature_names)
 
     logger.info("=" * 60)
-    logger.info("FIN     ft_engineering.py — build_features()")
+    logger.info("FIN     ft_engineering.py — build_features() | use_case: %s", use_case)
     logger.info("=" * 60)
+
+    if return_base:
+        # X_train_base / X_test_base: DataFrames en escala original (pre-pipeline_ml).
+        # Son la salida de pipeline_base: imputados, winsorizados y con columnas de
+        # leakage eliminadas, pero SIN StandardScaler ni encoding.
+        # Indispensable para el modelo heurístico, cuyos thresholds están en la
+        # escala interpretable original (ej. puntaje_datacredito < 760).
+        return X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base, \
+               X_train_base, X_test_base
 
     return X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base
 
 def _validate_columns(df: pd.DataFrame, cfg: dict) -> None:
-    """Valida que todas las columnas del config estén en el DataFrame."""
+    """Valida columnas del cfg ya resuelto — aplica al use_case correcto."""
     fe_cfg   = cfg["feature_engineering"]
     expected = (
         fe_cfg["numeric_cols"]
@@ -690,18 +867,36 @@ def _validate_columns(df: pd.DataFrame, cfg: dict) -> None:
 #  EJECUCION STANDALONE
 
 if __name__ == "__main__":
-    cfg_main, repo_root_main = load_config()
-    artifacts_dir = repo_root_main / cfg_main["paths"]["artifacts_dir"]
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Feature engineering — pipeline MLOps.")
+    parser.add_argument(
+        "--use-case", type=str, dest="use_case", default="scoring_mora",
+        help="Caso de uso en config.json > use_cases (default: scoring_mora).",
+    )
+    parser.add_argument(
+        "--raw-path", type=str, dest="raw_path", default=None,
+        help="Ruta explícita al archivo de datos (sobreescribe config).",
+    )
+    args = parser.parse_args()
+
+    # artifacts_dir resuelto por use_case → dos use_cases no se sobreescriben
+    cfg_main, _ = load_config()
+    cfg_resolved = resolve_cfg(cfg_main, args.use_case)
+    artifacts_dir = Path(cfg_resolved["paths"]["artifacts_dir"])
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base = build_features(
-        return_dataframe=True
+        use_case=args.use_case,
+        raw_path=Path(args.raw_path) if args.raw_path else None,
+        return_dataframe=True,
     )
 
     X_train.to_csv(artifacts_dir / "X_train.csv", index=False)
     X_test.to_csv(artifacts_dir  / "X_test.csv",  index=False)
-    pd.Series(y_train, name="mora").to_csv(artifacts_dir / "y_train.csv", index=False)
-    pd.Series(y_test,  name="mora").to_csv(artifacts_dir / "y_test.csv",  index=False)
+    event_col = cfg_resolved["target"]["event_col"]
+    pd.Series(y_train, name=event_col).to_csv(artifacts_dir / "y_train.csv", index=False)
+    pd.Series(y_test,  name=event_col).to_csv(artifacts_dir / "y_test.csv",  index=False)
 
     with open(artifacts_dir / "pipeline_ml.pkl", "wb") as fh:
         pickle.dump(pipeline_ml, fh)

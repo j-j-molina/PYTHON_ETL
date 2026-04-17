@@ -1,5 +1,259 @@
 {
   "project_code": "cdp_credito",
+  "use_cases": {
+    "scoring_mora": {
+      "description": "Modelo de scoring de probabilidad de mora en créditos nuevos.",
+      "source": {
+        "type": "bigquery",
+        "project": "pro-cientificos-jj",
+        "dataset": "financiero",
+        "table": "scoring_creditos",
+        "dev_limit": null
+      },
+      "paths": {
+        "raw_data": "data/raw/scoring_mora.parquet",
+        "state_file": "data/state/scoring_mora_ingestion_state.json",
+        "artifacts_dir": "artifacts/scoring_mora",
+        "reports_dir": "reports/scoring_mora",
+        "logs_file": "artifacts/scoring_mora/prediction_logs.csv",
+        "model_file": "artifacts/scoring_mora/best_model.joblib",
+        "model_meta_file": "artifacts/scoring_mora/best_model_meta.json",
+        "train_reference_file": "artifacts/scoring_mora/train_reference.csv",
+        "pipeline_ml_file": "artifacts/scoring_mora/pipeline_ml.pkl",
+        "pipeline_base_file": "artifacts/scoring_mora/pipeline_base.pkl",
+        "deploy_summary_file": "artifacts/scoring_mora/deploy_summary.json",
+        "metrics_file": "reports/scoring_mora/metrics_latest.json",
+        "drift_report_file": "reports/scoring_mora/drift_report.csv"
+      },
+      "ingestion": {
+        "select_columns": [
+          "tipo_credito",
+          "fecha_prestamo",
+          "capital_prestado",
+          "plazo_meses",
+          "edad_cliente",
+          "tipo_laboral",
+          "salario_cliente",
+          "total_otros_prestamos",
+          "cuota_pactada",
+          "puntaje",
+          "puntaje_datacredito",
+          "cant_creditosvigentes",
+          "huella_consulta",
+          "saldo_mora",
+          "saldo_total",
+          "saldo_principal",
+          "saldo_mora_codeudor",
+          "creditos_sectorFinanciero",
+          "creditos_sectorCooperativo",
+          "creditos_sectorReal",
+          "promedio_ingresos_datacredito",
+          "tendencia_ingresos",
+          "Pago_atiempo"
+        ],
+        "expected_columns": [
+          "tipo_credito",
+          "fecha_prestamo",
+          "capital_prestado",
+          "plazo_meses",
+          "edad_cliente",
+          "tipo_laboral",
+          "salario_cliente",
+          "total_otros_prestamos",
+          "cuota_pactada",
+          "puntaje",
+          "puntaje_datacredito",
+          "cant_creditosvigentes",
+          "huella_consulta",
+          "saldo_mora",
+          "saldo_total",
+          "saldo_principal",
+          "saldo_mora_codeudor",
+          "creditos_sectorFinanciero",
+          "creditos_sectorCooperativo",
+          "creditos_sectorReal",
+          "promedio_ingresos_datacredito",
+          "tendencia_ingresos",
+          "Pago_atiempo"
+        ],
+        "incremental_key": "fecha_prestamo",
+        "incremental_start": "2024-01-01",
+        "lookback_days": 2,
+        "write_format": "parquet",
+        "unique_key": null
+      },
+      "target": {
+        "label_col": "Pago_atiempo",
+        "event_col": "mora",
+        "positive_class": 1,
+        "description": "mora=1 si Pago_atiempo==0 (no pagó a tiempo)."
+      },
+      "split": {
+        "type": "temporal",
+        "date_col": "fecha_prestamo",
+        "train_cutoff": "2025-09",
+        "description": "Entrenar hasta sep-2025 inclusive. Evaluar desde oct-2025 en adelante."
+      },
+      "feature_engineering": {
+        "leakage_cols": [
+          "puntaje",
+          "Pago_atiempo",
+          "saldo_mora",
+          "saldo_total",
+          "saldo_principal",
+          "saldo_mora_codeudor"
+        ],
+        "drop_cols": [
+          "fecha_prestamo",
+          "mora",
+          "salario_cliente",
+          "creditos_sectorFinanciero",
+          "creditos_sectorCooperativo",
+          "creditos_sectorReal"
+        ],
+        "_drop_cols_reason": {
+          "salario_cliente": "EDA IV: redundante con promedio_ingresos_datacredito (IV=0.104 vs IV<0.02). Se reemplaza como denominador en ratios.",
+          "creditos_sectorFinanciero": "EDA IV: IV<0.02 (inútil). Información contenida en cant_creditosvigentes.",
+          "creditos_sectorCooperativo": "EDA IV: IV<0.02 (inútil). Información contenida en cant_creditosvigentes.",
+          "creditos_sectorReal": "EDA IV: IV<0.02 (inútil). Información contenida en cant_creditosvigentes."
+        },
+        "numeric_cols": [
+          "puntaje_datacredito",
+          "huella_consulta",
+          "plazo_meses",
+          "promedio_ingresos_datacredito",
+          "edad_cliente",
+          "capital_prestado",
+          "total_otros_prestamos",
+          "cuota_pactada",
+          "cant_creditosvigentes",
+          "ratio_cuota_ingresos",
+          "ratio_capital_ingresos",
+          "ratio_otros_prestamos_ingresos",
+          "dti_aprox",
+          "antiguedad_prestamo_dias",
+          "anio_prestamo",
+          "mes_prestamo"
+        ],
+        "categorical_cols": [
+          "tipo_credito",
+          "tipo_laboral",
+          "dia_semana_prestamo"
+        ],
+        "ordinal_cols": {
+          "tendencia_ingresos": [
+            "Decreciente",
+            "Estable",
+            "Creciente"
+          ],
+          "edad_bucket": [
+            "18-25",
+            "26-35",
+            "36-45",
+            "46-55",
+            "56-65",
+            "66+"
+          ]
+        },
+        "winsorize_cols": [
+          "capital_prestado",
+          "total_otros_prestamos",
+          "cuota_pactada"
+        ],
+        "winsorize_quantile": 0.99,
+        "impute_grouped": {
+          "promedio_ingresos_datacredito": "tipo_laboral"
+        },
+        "categorical_cleaners": {
+          "tendencia_ingresos": [
+            "Creciente",
+            "Estable",
+            "Decreciente"
+          ]
+        },
+        "derived_features": {
+          "antiguedad_ref_date": "2026-02-28",
+          "temporal_col": "fecha_prestamo",
+          "year_col": "anio_prestamo",
+          "month_col": "mes_prestamo",
+          "dayname_col": "dia_semana_prestamo",
+          "antiguedad_col": "antiguedad_prestamo_dias",
+          "age_col": "edad_cliente",
+          "age_bucket_col": "edad_bucket",
+          "edad_bucket_bins": [
+            18,
+            26,
+            36,
+            46,
+            56,
+            66,
+            120
+          ],
+          "edad_bucket_labels": [
+            "18-25",
+            "26-35",
+            "36-45",
+            "46-55",
+            "56-65",
+            "66+"
+          ],
+          "ratio_features": [
+            {
+              "name": "ratio_cuota_ingresos",
+              "numerator": "cuota_pactada",
+              "denominator": "promedio_ingresos_datacredito",
+              "_note": "Reemplaza ratio_cuota_salario. Denominador cambiado a promedio_ingresos_datacredito (mayor IV, menos nulos relativos post-imputación)."
+            },
+            {
+              "name": "ratio_capital_ingresos",
+              "numerator": "capital_prestado",
+              "denominator": "promedio_ingresos_datacredito",
+              "_note": "Reemplaza ratio_capital_salario."
+            },
+            {
+              "name": "ratio_otros_prestamos_ingresos",
+              "numerator": "total_otros_prestamos",
+              "denominator": "promedio_ingresos_datacredito",
+              "_note": "Reemplaza ratio_otros_prestamos_salario."
+            },
+            {
+              "name": "dti_aprox",
+              "numerator_sum": [
+                "cuota_pactada",
+                "total_otros_prestamos"
+              ],
+              "denominator": "promedio_ingresos_datacredito",
+              "_note": "Denominador cambiado de salario_cliente a promedio_ingresos_datacredito."
+            }
+          ]
+        }
+      },
+      "heuristic": {
+        "_comment": "Reglas derivadas del EDA (IV y pruebas t). Ver README sección 'Modelo Heurístico Baseline'.",
+        "min_signals": 2,
+        "rules": [
+          {
+            "col": "puntaje_datacredito",
+            "op": "<",
+            "threshold": 760,
+            "_note": "IV=0.199 | media mora=749, al día=782"
+          },
+          {
+            "col": "huella_consulta",
+            "op": ">",
+            "threshold": 5,
+            "_note": "IV=0.146 | media mora=5.2, al día=4.2"
+          },
+          {
+            "col": "plazo_meses",
+            "op": ">",
+            "threshold": 12,
+            "_note": "IV=0.128 | media mora=12.5, al día=10.5"
+          }
+        ]
+      }
+    }
+  },
   "paths": {
     "base_data_csv": "Base_de_datos.csv",
     "artifacts_dir": "mlops_pipeline/artifacts",
@@ -23,11 +277,19 @@
   "feature_engineering": {
     "leakage_cols": [
       "puntaje",
-      "Pago_atiempo"
+      "Pago_atiempo",
+      "saldo_mora",
+      "saldo_total",
+      "saldo_principal",
+      "saldo_mora_codeudor"
     ],
     "drop_cols": [
       "fecha_prestamo",
-      "mora"
+      "mora",
+      "salario_cliente",
+      "creditos_sectorFinanciero",
+      "creditos_sectorCooperativo",
+      "creditos_sectorReal"
     ],
     "numeric_cols": [
       "puntaje_datacredito",
@@ -38,19 +300,11 @@
       "capital_prestado",
       "total_otros_prestamos",
       "cuota_pactada",
-      "salario_cliente",
       "cant_creditosvigentes",
-      "creditos_sectorFinanciero",
-      "creditos_sectorCooperativo",
-      "creditos_sectorReal",
-      "creditos_sector_total",
-      "ratio_cuota_salario",
-      "ratio_capital_salario",
-      "ratio_otros_prestamos_salario",
+      "ratio_cuota_ingresos",
+      "ratio_capital_ingresos",
+      "ratio_otros_prestamos_ingresos",
       "dti_aprox",
-      "pct_creditos_sectorFinanciero",
-      "pct_creditos_sectorCooperativo",
-      "pct_creditos_sectorReal",
       "antiguedad_prestamo_dias",
       "anio_prestamo",
       "mes_prestamo"
@@ -76,7 +330,6 @@
       ]
     },
     "winsorize_cols": [
-      "salario_cliente",
       "capital_prestado",
       "total_otros_prestamos",
       "cuota_pactada"
@@ -128,7 +381,56 @@
       "pr_auc": 0.3,
       "recall": 0.2,
       "gap": 0.1
-    }
+    },
+    "models": [
+      {
+        "name": "Logistic Regression",
+        "type": "logistic_regression",
+        "params": {
+          "class_weight": "balanced",
+          "max_iter": 1000,
+          "C": 0.1,
+          "solver": "lbfgs",
+          "random_state": 42
+        }
+      },
+      {
+        "name": "Decision Tree",
+        "type": "decision_tree",
+        "params": {
+          "class_weight": "balanced",
+          "max_depth": 5,
+          "min_samples_leaf": 20,
+          "random_state": 42
+        }
+      },
+      {
+        "name": "Random Forest",
+        "type": "random_forest",
+        "params": {
+          "class_weight": "balanced",
+          "n_estimators": 200,
+          "max_depth": 8,
+          "min_samples_leaf": 10,
+          "n_jobs": -1,
+          "random_state": 42
+        }
+      },
+      {
+        "name": "Gradient Boosting",
+        "type": "gradient_boosting",
+        "params": {
+          "n_estimators": 200,
+          "learning_rate": 0.05,
+          "max_depth": 4,
+          "min_samples_leaf": 10,
+          "subsample": 0.8,
+          "random_state": 42
+        },
+        "fit_strategy": "sample_weight_positive"
+      }
+    ],
+    "_models_note": "Catálogo de modelos configurable por use_case o globalmente. Cada item requiere {name, type, params}; fit_strategy opcional."
   },
   "monitoring": {
     "psi_threshold": 0.2,
@@ -146,5 +448,6 @@
       "medio": 1.0
     },
     "batch_max_records": 10000
-  }
+  },
+  "_comment_feature_engineering": "Sección global usada como fallback. Cada use_case debe definir su propio 'feature_engineering' en use_cases.<nombre>. resolve_cfg() fusiona global + use_case (use_case gana en conflicto)."
 }

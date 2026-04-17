@@ -1,7 +1,7 @@
 """
 model_training.py
 =================
-Entrenamiento, evaluación y selección del mejor modelo predictivo de mora.
+Entrenamiento, evaluación y selección del mejor modelo predictivo del evento objetivo.
 
 Funciones principales requeridas por el proyecto:
   - summarize_classification(): métricas completas de clasificación
@@ -34,11 +34,11 @@ Correcciones respecto a la primera versión:
 Criterio de selección (config.training.selection_weights):
   Performance  → ROC-AUC (40%) y PR-AUC (30%)  sobre CV-train
   Consistency  → gap roc_auc train-test (10%)
-  Recall mora  → capturar moras (20%)
+  Recall del evento → capturar positivos (20%)
 
 Outputs:
-  artifacts/best_model.joblib
-  artifacts/best_model_meta.json
+  artifacts/<use_case>/best_model.joblib
+  artifacts/<use_case>/best_model_meta.json
   reports/metrics_latest.json
   reports/curvas_roc_pr.png
   reports/comparacion_metricas.png
@@ -53,6 +53,7 @@ Uso:
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import time
@@ -95,6 +96,41 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 sns.set_theme(style="whitegrid", palette="muted")
 
+
+def resolve_runtime_paths(cfg_global: dict, cfg: dict) -> dict:
+    """
+    Resuelve rutas runtime con awareness por use_case.
+
+    Si el use_case sobreescribe artifacts_dir / reports_dir pero NO redefine
+    model_file, metrics_file, etc., se derivan automáticamente dentro de esos
+    directorios para evitar colisiones entre casos de uso.
+    """
+    top_paths = cfg_global.get("paths", {})
+    paths = dict(cfg.get("paths", {}))
+
+    artifacts_dir = Path(paths["artifacts_dir"])
+    reports_dir   = Path(paths["reports_dir"])
+
+    derived = {
+        "model_file":           artifacts_dir / Path(top_paths.get("model_file", "best_model.joblib")).name,
+        "model_meta_file":      artifacts_dir / Path(top_paths.get("model_meta_file", "best_model_meta.json")).name,
+        "train_reference_file": artifacts_dir / Path(top_paths.get("train_reference_file", "train_reference.csv")).name,
+        "logs_file":            artifacts_dir / Path(top_paths.get("logs_file", "prediction_logs.csv")).name,
+        "pipeline_ml_file":     artifacts_dir / Path(top_paths.get("pipeline_ml_file", "pipeline_ml.pkl")).name,
+        "pipeline_base_file":   artifacts_dir / Path(top_paths.get("pipeline_base_file", "pipeline_base.pkl")).name,
+        "deploy_summary_file":  artifacts_dir / Path(top_paths.get("deploy_summary_file", "deploy_summary.json")).name,
+        "metrics_file":         reports_dir / Path(top_paths.get("metrics_file", "metrics_latest.json")).name,
+        "drift_report_file":    reports_dir / Path(top_paths.get("drift_report_file", "drift_report.csv")).name,
+    }
+
+    for key, derived_path in derived.items():
+        if paths.get(key) == top_paths.get(key):
+            paths[key] = str(derived_path)
+        elif key not in paths:
+            paths[key] = str(derived_path)
+
+    return paths
+
 # ──────────────────────────────────────────────────────────
 #  Threshold calibration
 
@@ -108,18 +144,18 @@ def find_optimal_threshold(
     Encuentra el umbral de decisión óptimo sobre el conjunto de TRAIN.
 
     Por qué es necesario:
-      Con mora ~4.85% en train, el threshold default de 0.50 hace que
-      ningún modelo prediga mora, ya que la probabilidad estimada para
+      Con una clase positiva minoritaria en train, el threshold default de 0.50 hace que
+      ningún modelo prediga el evento, ya que la probabilidad estimada para
       la clase minoritaria rara vez supera ese umbral.
 
     Estrategias (configurables en config.training.threshold_strategy):
-      'f1'     → maximiza F1-mora (equilibrio precision/recall).
+      'f1'     → maximiza F1 del evento (equilibrio precision/recall).
       'recall' → maximiza recall con precision >= min_precision.
-      'prior'  → usa la tasa de mora del train como umbral directo.
+      'prior'  → usa la tasa del evento en train como umbral directo.
 
     Args:
         y_true:        etiquetas reales del train.
-        y_proba:       probabilidades de mora del train.
+        y_proba:       probabilidades de la clase positiva del train.
         strategy:      'f1' | 'recall' | 'prior'.
         min_precision: precisión mínima aceptable (solo para 'recall').
 
@@ -173,6 +209,7 @@ def find_optimal_threshold(
 # ──────────────────────────────────────────────────────────
 #  summarize_classification
 
+
 def summarize_classification(
     y_true:     np.ndarray,
     y_pred:     np.ndarray,
@@ -180,46 +217,37 @@ def summarize_classification(
     model_name: str,
     split_name: str  = "Test",
     threshold:  float = 0.50,
+    event_label: str = "event",
     verbose:    bool  = True,
 ) -> dict:
     """
     Genera un resumen completo de métricas de clasificación.
-
-    Args:
-        y_true:     etiquetas reales.
-        y_pred:     predicciones binarias (ya aplicado el threshold).
-        y_proba:    probabilidades de la clase positiva (mora=1).
-        model_name: nombre del modelo para logging.
-        split_name: 'Train', 'Test' o 'CV'.
-        threshold:  umbral usado para generar y_pred (solo informativo).
-        verbose:    si True imprime el reporte completo.
-
-    Returns:
-        dict con todas las métricas clave.
     """
     roc_auc = roc_auc_score(y_true, y_proba)
     pr_auc  = average_precision_score(y_true, y_proba)
     cm      = confusion_matrix(y_true, y_pred)
     tn, fp, fn, tp = cm.ravel()
 
+    pos_label = event_label
     report = classification_report(
         y_true, y_pred,
-        target_names=["Al dia", "Mora"],
+        target_names=["Al dia", pos_label],
         output_dict=True,
         zero_division=0,
     )
 
     metrics = {
-        "model":           model_name,
-        "split":           split_name,
-        "threshold":       round(threshold, 4),
-        "roc_auc":         round(roc_auc, 4),
-        "pr_auc":          round(pr_auc, 4),
-        "accuracy":        round(report["accuracy"], 4),
-        "precision_mora":  round(report["Mora"]["precision"], 4),
-        "recall_mora":     round(report["Mora"]["recall"], 4),
-        "f1_mora":         round(report["Mora"]["f1-score"], 4),
-        "support_mora":    int(report["Mora"]["support"]),
+        "model":            model_name,
+        "split":            split_name,
+        "threshold":        round(threshold, 4),
+        "roc_auc":          round(roc_auc, 4),
+        "pr_auc":           round(pr_auc, 4),
+        "accuracy":         round(report["accuracy"], 4),
+        "precision_event":  round(report[pos_label]["precision"], 4),
+        "recall_event":     round(report[pos_label]["recall"], 4),
+        "f1_event":         round(report[pos_label]["f1-score"], 4),
+        "support_event":    int(report[pos_label]["support"]),
+        "event_label":      event_label,
         "tn": int(tn), "fp": int(fp),
         "fn": int(fn), "tp": int(tp),
     }
@@ -229,10 +257,14 @@ def summarize_classification(
         logger.info("%-25s  [%s]  threshold=%.3f", model_name, split_name, threshold)
         logger.info("-" * 60)
         logger.info("ROC-AUC : %.4f  |  PR-AUC: %.4f", roc_auc, pr_auc)
-        logger.info("Recall mora : %.4f  |  Precision mora: %.4f",
-                    metrics["recall_mora"], metrics["precision_mora"])
-        logger.info("F1 mora : %.4f  |  Accuracy: %.4f",
-                    metrics["f1_mora"], metrics["accuracy"])
+        logger.info("Recall %s : %.4f  |  Precision %s: %.4f",
+                    event_label,
+                    metrics["recall_event"],
+                    event_label,
+                    metrics["precision_event"])
+        logger.info("F1 %s : %.4f  |  Accuracy: %.4f",
+                    event_label,
+                    metrics["f1_event"], metrics["accuracy"])
         logger.info("CM  TN=%-5d FP=%-5d FN=%-5d TP=%-5d", tn, fp, fn, tp)
 
     return metrics
@@ -250,6 +282,7 @@ def build_model(
     threshold_strategy:    str   = "f1",
     threshold_min_precision: float = 0.05,
     fit_params:        dict = None,
+    event_label:       str  = "event",
 ) -> tuple:
     """
     Entrena un estimador, calibra el threshold sobre train y evalúa en test.
@@ -293,10 +326,12 @@ def build_model(
     y_pred_test  = (y_proba_test  >= threshold).astype(int)
 
     metrics_train = summarize_classification(
-        y_train, y_pred_train, y_proba_train, name, "Train", threshold
+        y_train, y_pred_train, y_proba_train, name, "Train", threshold,
+        event_label=event_label,
     )
     metrics_test = summarize_classification(
-        y_test, y_pred_test, y_proba_test, name, "Test", threshold
+        y_test, y_pred_test, y_proba_test, name, "Test", threshold,
+        event_label=event_label,
     )
 
     metrics_train["fit_time"] = fit_time
@@ -337,7 +372,7 @@ def cross_validate_model(
     se subsetea por fold para garantizar coherencia con el índice de train.
 
     Por qué StratifiedKFold:
-      Con mora=4.85%, KFold puede generar folds sin ninguna mora.
+      Con una clase positiva minoritaria, KFold puede generar folds sin positivos.
       Stratified garantiza la proporción en cada fold.
 
     Args:
@@ -452,14 +487,15 @@ def plot_roc_pr_curves(models_data, X_test, y_test, save_path):
     plt.close()
     logger.info("Curvas ROC/PR guardadas: %s", save_path)
 
-def plot_metrics_comparison(metrics_list, save_path):
+
+def plot_metrics_comparison(metrics_list, save_path, event_label="event"):
     """Barras comparativas de métricas en test set."""
     test_df = pd.DataFrame(
         [m for m in metrics_list if m["split"] == "Test"]
     ).set_index("model")
 
-    metric_cols   = ["roc_auc", "pr_auc", "recall_mora", "f1_mora"]
-    metric_labels = ["ROC-AUC", "PR-AUC", "Recall mora", "F1 mora"]
+    metric_cols   = ["roc_auc", "pr_auc", "recall_event", "f1_event"]
+    metric_labels = ["ROC-AUC", "PR-AUC", f"Recall {event_label}", f"F1 {event_label}"]
     colors        = ["#1D9E75", "#378ADD", "#BA7517", "#E24B4A"]
 
     fig, axes = plt.subplots(1, 4, figsize=(16, 4), sharey=False)
@@ -501,16 +537,16 @@ def plot_cv_comparison(cv_results_list, save_path):
         median.set_color("white")
         median.set_linewidth(2)
 
-    ax.set_title("Recall mora — CV StratifiedKFold(5) por modelo",
+    ax.set_title(f"Recall {event_label} — CV StratifiedKFold(5) por modelo",
                  fontweight="bold", fontsize=12)
-    ax.set_ylabel("Recall mora")
+    ax.set_ylabel(f"Recall {event_label}")
     ax.set_ylim(0, 1)
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
     logger.info("CV comparison guardada: %s", save_path)
 
-def plot_confusion_matrices(models_data, thresholds, X_test, y_test, save_path):
+def plot_confusion_matrices(models_data, thresholds, X_test, y_test, save_path, event_label="event"):
     """Matrices de confusión normalizadas con threshold calibrado."""
     n    = len(models_data)
     fig, axes = plt.subplots(1, n, figsize=(5 * n, 4))
@@ -523,8 +559,8 @@ def plot_confusion_matrices(models_data, thresholds, X_test, y_test, save_path):
         y_pred = (y_prob >= thr).astype(int)
         cm     = confusion_matrix(y_test, y_pred, normalize="true")
         sns.heatmap(cm, annot=True, fmt=".2%", cmap="Blues",
-                    xticklabels=["Al dia", "Mora"],
-                    yticklabels=["Al dia", "Mora"],
+                    xticklabels=["Negativo", event_label],
+                    yticklabels=["Negativo", event_label],
                     ax=ax, cbar=False)
         ax.set_title(f"{md['name']}\n(thr={thr:.3f})", fontweight="bold", fontsize=10)
         ax.set_xlabel("Predicho"); ax.set_ylabel("Real")
@@ -608,7 +644,7 @@ def plot_learning_curve_best(estimator, model_name, X_train, y_train,
 
 def print_summary_table(all_metrics):
     cols = ["model", "split", "threshold", "roc_auc", "pr_auc",
-            "recall_mora", "precision_mora", "f1_mora", "accuracy", "fit_time"]
+            "recall_event", "precision_event", "f1_event", "accuracy", "fit_time"]
     df = pd.DataFrame(all_metrics)[cols].sort_values(
         ["split", "roc_auc"], ascending=[True, False]
     )
@@ -620,10 +656,10 @@ def print_summary_table(all_metrics):
 
 def select_best_model(models_data, cv_results_list, all_metrics, weights):
     """
-    Score ponderado usando métricas de CV (más estables que el test de 29 moras).
+    Score ponderado usando métricas de CV.
 
       Performance  → ROC-AUC CV (40%) y PR-AUC test (30%)
-      Recall mora  → recall CV mean (20%)
+      Recall del evento  → recall CV mean (20%)
       Consistency  → penaliza gap roc_auc train-test (10%)
     """
     cv_map   = {r["model"]: r["metrics"] for r in cv_results_list}
@@ -660,19 +696,81 @@ def select_best_model(models_data, cv_results_list, all_metrics, weights):
     logger.info("Mejor modelo: %s  (score=%.4f)", best["name"], best["score"])
     return best
 
+
+def _default_model_specs() -> list[dict]:
+    return [
+        {"name": "Logistic Regression", "type": "logistic_regression",
+         "params": {"class_weight": "balanced", "max_iter": 1000, "C": 0.1, "solver": "lbfgs", "random_state": 42}},
+        {"name": "Decision Tree", "type": "decision_tree",
+         "params": {"class_weight": "balanced", "max_depth": 5, "min_samples_leaf": 20, "random_state": 42}},
+        {"name": "Random Forest", "type": "random_forest",
+         "params": {"class_weight": "balanced", "n_estimators": 200, "max_depth": 8, "min_samples_leaf": 10, "n_jobs": -1, "random_state": 42}},
+        {"name": "Gradient Boosting", "type": "gradient_boosting",
+         "params": {"n_estimators": 200, "learning_rate": 0.05, "max_depth": 4, "min_samples_leaf": 10, "subsample": 0.8, "random_state": 42},
+         "fit_strategy": "sample_weight_positive"},
+    ]
+
+
+def build_model_definitions(train_cfg: dict, y_train: np.ndarray) -> list[tuple[str, object, dict | None]]:
+    """Construye el catálogo de modelos desde config.training.models."""
+    specs = train_cfg.get("models") or _default_model_specs()
+    pos_weight = float((y_train == 0).sum() / max((y_train == 1).sum(), 1))
+    gb_sample_weight = np.where(y_train == 1, pos_weight, 1.0)
+
+    out = []
+    for spec in specs:
+        model_type = spec["type"]
+        params = spec.get("params", {})
+        fit_strategy = spec.get("fit_strategy")
+        name = spec.get("name", model_type.replace("_", " ").title())
+
+        if model_type == "logistic_regression":
+            estimator = LogisticRegression(**params)
+        elif model_type == "decision_tree":
+            estimator = DecisionTreeClassifier(**params)
+        elif model_type == "random_forest":
+            estimator = RandomForestClassifier(**params)
+        elif model_type == "gradient_boosting":
+            estimator = GradientBoostingClassifier(**params)
+        else:
+            raise ValueError(f"Tipo de modelo no soportado en config.training.models: {model_type}")
+
+        fit_params = {"sample_weight": gb_sample_weight} if fit_strategy == "sample_weight_positive" else None
+        out.append((name, estimator, fit_params))
+
+    logger.info("Catálogo de modelos cargado desde config: %d modelos", len(out))
+    return out
+
 # ──────────────────────────────────────────────────────────
 #  Ejecución principal
+
 
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-    from ft_engineering import build_features, load_config
+    from ft_engineering import build_features, load_config, resolve_cfg
+
+    parser = argparse.ArgumentParser(
+        description="model_training — entrenamiento y selección del mejor modelo"
+    )
+    parser.add_argument(
+        "--use-case", type=str, dest="use_case", required=True,
+        help="Caso de uso definido en config.json > use_cases.",
+    )
+    parser.add_argument(
+        "--config", type=str, default=None,
+        help="Ruta opcional a config.json.",
+    )
+    args = parser.parse_args()
 
     # ── Config y directorios ──────────────────────────────
-    cfg, repo_root = load_config()
-    artifacts_dir  = repo_root / cfg["paths"]["artifacts_dir"]
-    reports_dir    = repo_root / cfg["paths"]["reports_dir"]
+    cfg_global, _ = load_config(Path(args.config) if args.config else None)
+    cfg = resolve_cfg(cfg_global, args.use_case)
+    paths = resolve_runtime_paths(cfg_global, cfg)
+
+    artifacts_dir  = Path(paths["artifacts_dir"])
+    reports_dir    = Path(paths["reports_dir"])
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     reports_dir.mkdir(parents=True, exist_ok=True)
 
@@ -681,18 +779,23 @@ if __name__ == "__main__":
     cv_scoring          = train_cfg.get("cv_scoring", "recall")
     threshold_strategy  = train_cfg.get("threshold_strategy", "f1")
     threshold_min_prec  = train_cfg.get("threshold_min_precision", 0.05)
-    sel_weights         = train_cfg.get("selection_weights",
-                                        {"roc_auc": 0.4, "pr_auc": 0.3,
-                                         "recall": 0.2, "gap": 0.1})
+    sel_weights         = train_cfg.get(
+        "selection_weights",
+        {"roc_auc": 0.4, "pr_auc": 0.3, "recall": 0.2, "gap": 0.1},
+    )
+    event_label = cfg["target"]["event_col"]
 
     # ── Features ─────────────────────────────────────────
-    logger.info("Cargando features desde ft_engineering...")
+    logger.info("Cargando features desde ft_engineering para use_case='%s'...", args.use_case)
     X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base = build_features(
-        return_dataframe=True
+        use_case=args.use_case,
+        config_path=Path(args.config) if args.config else None,
+        return_dataframe=True,
     )
     feature_names = list(X_train.columns)
     logger.info("X_train: %s | X_test: %s", X_train.shape, X_test.shape)
-    logger.info("Mora train: %.2f%% | test: %.2f%%",
+    logger.info("%s train: %.2f%% | test: %.2f%%",
+                event_label,
                 y_train.mean() * 100, y_test.mean() * 100)
 
     # ── Baseline heurístico ───────────────────────────────
@@ -703,54 +806,12 @@ if __name__ == "__main__":
             bl = json.load(f)
         baseline_roc = bl["test"]["roc_auc"]
         logger.info("Baseline heurístico — ROC-AUC test: %.4f", baseline_roc)
+    # ── Catálogo de modelos desde config ───────────────────
+    model_definitions = build_model_definitions(train_cfg, y_train)
 
-    # ── sample_weight para GradientBoosting ──────────────
-    # GB no acepta class_weight; compensamos con sample_weight
-    pos_weight = float((y_train == 0).sum() / max((y_train == 1).sum(), 1))
-    gb_sample_weight = np.where(y_train == 1, pos_weight, 1.0)
-    logger.info("GB sample_weight pos_weight=%.1fx", pos_weight)
-
-    # ── Definición de modelos ─────────────────────────────
-    model_definitions = [
-        (
-            "Logistic Regression",
-            LogisticRegression(
-                class_weight="balanced", max_iter=1000,
-                C=0.1, solver="lbfgs", random_state=42,
-            ),
-            None,
-        ),
-        (
-            "Decision Tree",
-            DecisionTreeClassifier(
-                class_weight="balanced", max_depth=5,
-                min_samples_leaf=20, random_state=42,
-            ),
-            None,
-        ),
-        (
-            "Random Forest",
-            RandomForestClassifier(
-                class_weight="balanced", n_estimators=200,
-                max_depth=8, min_samples_leaf=10,
-                n_jobs=-1, random_state=42,
-            ),
-            None,
-        ),
-        (
-            "Gradient Boosting",
-            GradientBoostingClassifier(
-                n_estimators=200, learning_rate=0.05,
-                max_depth=4, min_samples_leaf=10,
-                subsample=0.8, random_state=42,
-            ),
-            {"sample_weight": gb_sample_weight},  # compensa desbalance
-        ),
-    ]
-
-    # ── Entrenamiento y evaluación ────────────────────────
     logger.info("=" * 60)
-    logger.info("ENTRENAMIENTO DE MODELOS  (threshold_strategy='%s')", threshold_strategy)
+    logger.info("ENTRENAMIENTO DE MODELOS | use_case='%s' | threshold_strategy='%s'",
+                args.use_case, threshold_strategy)
     logger.info("=" * 60)
 
     models_data: list[dict] = []
@@ -763,12 +824,12 @@ if __name__ == "__main__":
             threshold_strategy=threshold_strategy,
             threshold_min_precision=threshold_min_prec,
             fit_params=fit_params,
+            event_label=event_label,
         )
         models_data.append({"name": name, "estimator": fitted})
         all_metrics.extend([m_train, m_test])
         thresholds[name] = thr
 
-    # ── Cross-validation ──────────────────────────────────
     logger.info("=" * 60)
     logger.info("CROSS-VALIDATION StratifiedKFold(k=%d)  scoring='%s'",
                 cv_folds, cv_scoring)
@@ -783,17 +844,15 @@ if __name__ == "__main__":
             scoring=cv_scoring,
             threshold_strategy=threshold_strategy,
             threshold_min_precision=threshold_min_prec,
-            fit_params=fit_params,   # sample_weight para GradientBoosting
+            fit_params=fit_params,
         )
         cv_results_list.append(cv_r)
 
-    # ── Tabla resumen ─────────────────────────────────────
     logger.info("\n%s", "=" * 60)
     logger.info("TABLA RESUMEN")
     logger.info("=" * 60)
     summary_df = print_summary_table(all_metrics)
 
-    # ── Comparar vs baseline ──────────────────────────────
     if baseline_roc > 0:
         logger.info("=" * 60)
         logger.info("Comparacion vs baseline heuristico (ROC-AUC=%.4f)", baseline_roc)
@@ -804,18 +863,17 @@ if __name__ == "__main__":
                         md["name"], te["roc_auc"],
                         "SI" if te["roc_auc"] > baseline_roc else "NO")
 
-    # ── Selección del mejor modelo ────────────────────────
     logger.info("=" * 60)
     logger.info("SELECCION DEL MEJOR MODELO  (CV-driven)")
     logger.info("=" * 60)
     best = select_best_model(models_data, cv_results_list, all_metrics, sel_weights)
 
-    # ── Gráficos ──────────────────────────────────────────
     logger.info("Generando graficos...")
     plot_roc_pr_curves(models_data, X_test, y_test,
                        save_path=reports_dir / "curvas_roc_pr.png")
     plot_metrics_comparison(all_metrics,
-                            save_path=reports_dir / "comparacion_metricas.png")
+                            save_path=reports_dir / "comparacion_metricas.png",
+                            event_label=event_label)
     plot_cv_comparison(cv_results_list,
                        save_path=reports_dir / "cv_recall_comparison.png")
     plot_confusion_matrices(models_data, thresholds, X_test, y_test,
@@ -827,27 +885,18 @@ if __name__ == "__main__":
                              save_path=reports_dir / "learning_curve_best.png",
                              scoring=cv_scoring)
 
-    # ── Guardar mejor modelo ──────────────────────────────
-    model_path = repo_root / cfg["paths"]["model_file"]
+    model_path = Path(paths["model_file"])
     model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(best["estimator"], model_path)
     logger.info("Mejor modelo guardado: %s", model_path)
 
-    # Guardar pipeline_ml (ColumnTransformer) — requerido por model_deploy.py
-    # Se serializa el pipeline ajustado SOLO en train para garantizar
-    # que en producción se apliquen exactamente las mismas transformaciones.
-    pipeline_ml_path = repo_root / cfg["paths"]["pipeline_ml_file"]
+    pipeline_ml_path = Path(paths["pipeline_ml_file"])
+    pipeline_ml_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline_ml, pipeline_ml_path)
     logger.info("pipeline_ml guardado: %s", pipeline_ml_path)
 
-    # Guardar pipeline_base — requerido por model_deploy.py
-    # pipeline_base viene de build_features() ajustado SOLO sobre train.
-    # Contiene ImputacionSegmentada (medianas por tipo_laboral) y Winsorizar
-    # (caps al p99), ambos calculados únicamente sobre los 9.938 registros
-    # de entrenamiento — sin contaminación del conjunto de test.
-    # En producción se aplica junto con pipeline_stateless (que es stateless
-    # y no necesita pkl) antes de pipeline_ml.
-    pipeline_base_path = repo_root / cfg["paths"]["pipeline_base_file"]
+    pipeline_base_path = Path(paths["pipeline_base_file"])
+    pipeline_base_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline_base, pipeline_base_path)
     logger.info("pipeline_base guardado: %s", pipeline_base_path)
 
@@ -856,6 +905,8 @@ if __name__ == "__main__":
     best_cv   = next(r for r in cv_results_list if r["model"] == best["name"])
 
     meta = {
+        "use_case":         args.use_case,
+        "event_col":        event_label,
         "model_name":       best["name"],
         "score":            best["score"],
         "gap_auc":          best["gap_auc"],
@@ -869,36 +920,41 @@ if __name__ == "__main__":
         "test_size":        int(len(y_test)),
         "train_mora_rate":  round(float(y_train.mean()), 4),
         "test_mora_rate":   round(float(y_test.mean()),  4),
+        "split_cutoff":     cfg["split"].get("train_cutoff"),
+        "paths":            paths,
     }
-    with open(repo_root / cfg["paths"]["model_meta_file"], "w") as f:
+    meta_path = Path(paths["model_meta_file"])
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
 
-    # Métricas para model_evaluation.py
     all_metrics_ext = all_metrics + [
         {"model": r["model"], "split": "CV", **{
             k: r["metrics"][k]["mean"] for k in r["metrics"]
         }} for r in cv_results_list
     ]
-    with open(repo_root / cfg["paths"]["metrics_file"], "w") as f:
+    metrics_path = Path(paths["metrics_file"])
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(metrics_path, "w") as f:
         json.dump(all_metrics_ext, f, indent=2)
 
-    # Dataset de referencia para monitoring
-    ref_path = repo_root / cfg["paths"]["train_reference_file"]
+    ref_path = Path(paths["train_reference_file"])
+    ref_path.parent.mkdir(parents=True, exist_ok=True)
     ref_df   = X_train.copy()
-    ref_df["mora"] = y_train
+    ref_df[event_label] = y_train
     ref_df.to_csv(ref_path, index=False)
 
-    # ── Resumen final ─────────────────────────────────────
     logger.info("=" * 60)
     logger.info("RESULTADO FINAL")
     logger.info("=" * 60)
+    logger.info("use_case          : %s", args.use_case)
     logger.info("Mejor modelo      : %s", best["name"])
     logger.info("Score seleccion   : %.4f", best["score"])
     logger.info("Threshold         : %.4f", thresholds[best["name"]])
     logger.info("ROC-AUC CV mean   : %.4f", best_cv["metrics"]["roc_auc"]["mean"])
     logger.info("Recall CV mean    : %.4f", best_cv["metrics"]["recall"]["mean"])
     logger.info("ROC-AUC test      : %.4f", best_test["roc_auc"])
-    logger.info("Recall mora test  : %.4f", best_test["recall_mora"])
+    logger.info("Recall %s test   : %.4f", event_label, best_test["recall_event"])
     logger.info("Gap AUC           : %.4f", best["gap_auc"])
     logger.info("=" * 60)
 
