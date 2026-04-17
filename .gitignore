@@ -13,3 +13,10 @@ venv/
 # artifacts & reports
 artifacts/
 reports/
+
+# test & coverage
+.coverage
+.pytest_cache/
+
+# runtime data
+data/

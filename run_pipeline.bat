@@ -28,8 +28,9 @@ echo  Python: %VENV_PYTHON%
 echo =====================================================
 echo.
 
-REM ── Directorio de scripts ──────────────────────────
-set "SRC=mlops_pipeline\src"
+REM ── Directorio de scripts y use_case ──────────────
+set "SRC=src"
+set "USE_CASE=scoring_mora"
 
 REM ── Helper: ejecutar paso y abortar si falla ───────
 REM   Uso: call :run_step "Nombre" script.py
@@ -39,7 +40,7 @@ goto :main
     set "STEP_NAME=%~1"
     set "STEP_SCRIPT=%~2"
     echo [>>] %STEP_NAME%
-    "%VENV_PYTHON%" "%SRC%\%STEP_SCRIPT%"
+    "%VENV_PYTHON%" "%SRC%\%STEP_SCRIPT%" --use-case %USE_CASE%
     if %ERRORLEVEL% NEQ 0 (
         echo.
         echo [ERROR] Fallo en: %STEP_NAME%

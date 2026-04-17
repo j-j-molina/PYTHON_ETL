@@ -47,20 +47,64 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def resolve_runtime_paths(cfg_global: dict, cfg: dict) -> dict:
+    top_paths = cfg_global.get("paths", {})
+    paths = dict(cfg.get("paths", {}))
+
+    artifacts_dir = Path(paths["artifacts_dir"])
+    reports_dir   = Path(paths["reports_dir"])
+
+    derived = {
+        "model_file":           artifacts_dir / Path(top_paths.get("model_file", "best_model.joblib")).name,
+        "model_meta_file":      artifacts_dir / Path(top_paths.get("model_meta_file", "best_model_meta.json")).name,
+        "train_reference_file": artifacts_dir / Path(top_paths.get("train_reference_file", "train_reference.csv")).name,
+        "logs_file":            artifacts_dir / Path(top_paths.get("logs_file", "prediction_logs.csv")).name,
+        "pipeline_ml_file":     artifacts_dir / Path(top_paths.get("pipeline_ml_file", "pipeline_ml.pkl")).name,
+        "pipeline_base_file":   artifacts_dir / Path(top_paths.get("pipeline_base_file", "pipeline_base.pkl")).name,
+        "deploy_summary_file":  artifacts_dir / Path(top_paths.get("deploy_summary_file", "deploy_summary.json")).name,
+        "metrics_file":         reports_dir / Path(top_paths.get("metrics_file", "metrics_latest.json")).name,
+        "drift_report_file":    reports_dir / Path(top_paths.get("drift_report_file", "drift_report.csv")).name,
+    }
+    for key, derived_path in derived.items():
+        if paths.get(key) == top_paths.get(key):
+            paths[key] = str(derived_path)
+        elif key not in paths:
+            paths[key] = str(derived_path)
+    return paths
+
+
+def get_event_metadata(cfg: dict) -> dict:
+    event_col = cfg["target"]["event_col"]
+    event_title = event_col.replace("_", " ").title()
+    return {
+        "event_col": event_col,
+        "event_title": event_title,
+        "score_col": f"score_{event_col}",
+        "pred_col": f"pred_{event_col}",
+        "actual_col": f"{event_col}_real",
+    }
+
+
 # ──────────────────────────────────────────────────────────
 #  Carga del modelo y metadatos
 
-def load_deployed_model(config_path: str | Path | None = None):
-    """Carga modelo, metadatos y config desde cfg.paths."""
+def load_deployed_model(
+    config_path: str | Path | None = None,
+    use_case: str = "scoring_mora",
+):
+    """Carga modelo, metadatos y config resuelto para un use_case."""
     import sys
     src_dir = Path(__file__).resolve().parent
     if str(src_dir) not in sys.path:
         sys.path.insert(0, str(src_dir))
-    from ft_engineering import load_config
+    from ft_engineering import load_config, resolve_cfg
 
-    cfg, repo_root = load_config(config_path)
-    model_path = repo_root / cfg["paths"]["model_file"]
-    meta_path  = repo_root / cfg["paths"]["model_meta_file"]
+    cfg_global, repo_root = load_config(config_path)
+    cfg = resolve_cfg(cfg_global, use_case)
+    cfg["paths"] = resolve_runtime_paths(cfg_global, cfg)
+
+    model_path = Path(cfg["paths"]["model_file"])
+    meta_path  = Path(cfg["paths"]["model_meta_file"])
 
     if not model_path.exists():
         raise FileNotFoundError(
@@ -72,8 +116,8 @@ def load_deployed_model(config_path: str | Path | None = None):
     with open(meta_path) as f:
         meta = json.load(f)
 
-    logger.info("Modelo cargado: %s  (threshold=%.4f)",
-                meta["model_name"], meta["threshold"])
+    logger.info("Modelo cargado: %s  (use_case=%s, threshold=%.4f)",
+                meta["model_name"], use_case, meta["threshold"])
     return model, meta, cfg, repo_root
 
 # ──────────────────────────────────────────────────────────
@@ -113,7 +157,7 @@ def predict_batch(
     log_predictions: bool = True,
 ) -> pd.DataFrame:
     """
-    Genera predicciones de mora para un batch de nuevos créditos.
+    Genera predicciones del evento objetivo para un batch de registros nuevos.
 
     Lee toda la configuración desde cfg (config.json):
       - Umbral de decisión: meta["threshold"]
@@ -124,7 +168,7 @@ def predict_batch(
       - Límite de batch: cfg.deploy.batch_max_records
 
     Returns:
-        DataFrame con: prediction_id, score_mora, pred_mora, riesgo,
+        DataFrame con: prediction_id, score_event, pred_event, risk_level,
                        fecha_prediccion. Si el input tenía fecha_prestamo,
                        se incluye como primera columna.
     """
@@ -143,7 +187,10 @@ def predict_batch(
     max_records  = deploy_cfg.get("batch_max_records", 10_000)
     risk_cfg     = deploy_cfg.get("risk_thresholds", {"bajo": 0.5, "medio": 1.0})
     date_col     = cfg["split"]["date_col"]
-    event_col    = cfg["target"]["event_col"]
+    event_meta   = get_event_metadata(cfg)
+    event_col    = event_meta["event_col"]
+    score_col    = event_meta["score_col"]
+    pred_col     = event_meta["pred_col"]
     leakage_cols = cfg["feature_engineering"]["leakage_cols"]
 
     classify_risk = _make_risk_classifier(threshold, risk_cfg)
@@ -199,7 +246,7 @@ def predict_batch(
     logger.info("pipeline_base cargado: %s", pipeline_base_path)
     df_transformed = apply_pipeline_steps(pipeline_base, df_pre)
 
-    # Limpiar residuos (mora, fecha) si quedaron tras el pipeline
+    # Limpiar residuos (target, fecha) si quedaron tras el pipeline
     drop_residual = [c for c in [event_col, date_col] if c in df_transformed.columns]
     if drop_residual:
         df_transformed = df_transformed.drop(columns=drop_residual)
@@ -228,16 +275,16 @@ def predict_batch(
     preds  = (scores >= threshold).astype(int)
     elapsed = time.time() - t0
     logger.info(
-        "Predicciones: %d records en %.3fs | mora=%d (%.1f%%)",
+        "Predicciones: %d records en %.3fs | positivos=%d (%.1f%%)",
         n_records, elapsed, preds.sum(), preds.mean() * 100,
     )
 
     # ── Construir resultado ───────────────────────────────
     result = pd.DataFrame({
         "prediction_id":    [str(uuid.uuid4()) for _ in range(n_records)],
-        "score_mora":       np.round(scores, 6),
-        "pred_mora":        preds,
-        "riesgo":           [classify_risk(s) for s in scores],
+        score_col:          np.round(scores, 6),
+        pred_col:           preds,
+        "risk_level":       [classify_risk(s) for s in scores],
         "fecha_prediccion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
 
@@ -364,9 +411,10 @@ def create_app(model=None, meta=None, cfg=None, repo_root=None):
             result = predict_batch(
                 df_input, model=model, meta=meta, cfg=cfg, repo_root=repo_root,
             )
+            pred_col = get_event_metadata(cfg)["pred_col"]
             return jsonify({
                 "n_records":   len(result),
-                "n_mora_pred": int(result["pred_mora"].sum()),
+                "n_event_pred": int(result[pred_col].sum()),
                 "predictions": result.to_dict(orient="records"),
             })
 
@@ -389,11 +437,11 @@ def generate_dockerfile(repo_root: Path, cfg: dict) -> None:
 
     content = f"""# Dockerfile — {image}
 # Proyecto: {cfg["project_code"]}  |  API: {d.get("api_version", "v1")}
-# Generado por model_deploy.py — CDP Entregable 3
+# Build desde mlops_pipeline/: docker build -t {image} .
 FROM python:3.11-slim
 
 LABEL project="{cfg["project_code"]}"
-LABEL description="Scoring de mora — {image}"
+LABEL description="Scoring del evento — {image}"
 LABEL maintainer="equipo-datos@empresa.com"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \\
@@ -404,25 +452,24 @@ ENV PYTHONDONTWRITEBYTECODE=1 \\
 WORKDIR /app
 
 COPY requirements_deploy.txt .
-RUN pip install --no-cache-dir -r requirements_deploy.txt
+RUN pip install --no-cache-dir -r requirements_deploy.txt && \\
+    mkdir -p mlops_pipeline/src {cfg["paths"]["artifacts_dir"]} {cfg["paths"]["reports_dir"]}
 
-COPY mlops_pipeline/src/ft_engineering.py  ./src/
-COPY mlops_pipeline/src/model_deploy.py    ./src/
-COPY mlops_pipeline/src/config.json        ./src/
+COPY src/ft_engineering.py  mlops_pipeline/src/
+COPY src/model_deploy.py    mlops_pipeline/src/
+COPY src/config.json        mlops_pipeline/src/
 
 COPY {cfg["paths"]["model_file"]}       ./{cfg["paths"]["model_file"]}
 COPY {cfg["paths"]["model_meta_file"]}  ./{cfg["paths"]["model_meta_file"]}
 COPY {cfg["paths"]["pipeline_ml_file"]}  ./{cfg["paths"]["pipeline_ml_file"]}
 COPY {cfg["paths"]["pipeline_base_file"]} ./{cfg["paths"]["pipeline_base_file"]}
 
-RUN mkdir -p /app/{cfg["paths"]["artifacts_dir"]} /app/{cfg["paths"]["reports_dir"]}
-
 EXPOSE {docker_port}
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \\
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \\
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:{docker_port}/health')"
 
-CMD ["python", "src/model_deploy.py", "--serve", "--host", "0.0.0.0", "--port", "{docker_port}"]
+CMD ["python", "mlops_pipeline/src/model_deploy.py", "--serve", "--host", "0.0.0.0", "--port", "{docker_port}", "--use-case", "{cfg["use_case"]}"]
 """
     # El Dockerfile va en la raíz del git repo (repo_root/mlops_pipeline/),
     # NO en la carpeta padre del curso (repo_root/).
@@ -439,29 +486,43 @@ def generate_dockerignore(repo_root: Path, cfg: dict) -> None:
 __pycache__/
 *.py[cod]
 *.egg-info/
+*-venv/
 .venv/
 venv/
 .env
+.coverage
 
 # Git
 .git/
 .gitignore
 
-# Notebooks
+# Notebooks y análisis
 *.ipynb
 .ipynb_checkpoints/
 
-# Datos crudos (cfg.paths.base_data_csv / train_reference_file)
-{cfg["paths"]["base_data_csv"]}
+# Datos crudos y de estado
+src/Base_de_datos.csv
+data/
 {cfg["paths"]["train_reference_file"]}
 
 # Reports (se generan en ejecución)
 {cfg["paths"]["reports_dir"]}/
 
-# CI/CD
-.sonarcloud.properties
+# Tests y cobertura
+tests/
+coverage.xml
+.pytest_cache/
+
+# Scripts de entorno y ejecución local
+set_up.sh
+set_up.bat
+run_pipeline.sh
+run_pipeline.bat
+
+# CI/CD y docs
+.github/
 sonar-project.properties
-Jenkinsfile
+README.md
 """
     git_root = repo_root / "mlops_pipeline"
     with open(git_root / ".dockerignore", "w") as f:
@@ -499,10 +560,10 @@ def generate_deploy_summary(repo_root: Path, meta: dict, cfg: dict) -> None:
         "threshold_strategy": meta.get("threshold_strategy"),
         "train_size":         meta.get("train_size"),
         "test_size":          meta.get("test_size"),
-        "train_mora_rate":    meta.get("train_mora_rate"),
-        "test_mora_rate":     meta.get("test_mora_rate"),
+        "train_event_rate":   meta.get("train_event_rate"),
+        "test_event_rate":    meta.get("test_event_rate"),
         "feature_count":      meta.get("feature_count"),
-        "train_cutoff":       cfg["split"]["train_cutoff"],
+        "train_cutoff":       cfg["split"].get("train_cutoff"),
         "cv_recall_mean":     (meta.get("cv_metrics", {})
                                .get("recall", {}).get("mean")),
         "cv_roc_auc_mean":    (meta.get("cv_metrics", {})
@@ -534,6 +595,7 @@ def generate_deploy_summary(repo_root: Path, meta: dict, cfg: dict) -> None:
 # ──────────────────────────────────────────────────────────
 #  Ejecución principal
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="model_deploy — artefactos Docker y API Flask"
@@ -546,17 +608,27 @@ if __name__ == "__main__":
                         help="Override puerto (default: cfg.deploy.port)")
     parser.add_argument("--batch",  type=str, default=None,
                         help="CSV para predicción batch inmediata")
+    parser.add_argument(
+        "--use-case", type=str, dest="use_case", required=True,
+        help="Caso de uso definido en config.json > use_cases.",
+    )
+    parser.add_argument(
+        "--config", type=str, default=None,
+        help="Ruta opcional a config.json.",
+    )
     args = parser.parse_args()
 
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-    model, meta, cfg, repo_root = load_deployed_model()
+    model, meta, cfg, repo_root = load_deployed_model(
+        config_path=Path(args.config) if args.config else None,
+        use_case=args.use_case,
+    )
     d    = cfg.get("deploy", {})
     host = args.host or d.get("host", "127.0.0.1")
     port = args.port or d.get("port", 5000)
 
-    # ── Batch directo ─────────────────────────────────────
     if args.batch:
         result = predict_batch(
             args.batch, model=model, meta=meta, cfg=cfg, repo_root=repo_root,
@@ -566,44 +638,42 @@ if __name__ == "__main__":
         logger.info("Predicciones: %s", out)
         logger.info("\n%s", result.head(10).to_string(index=False))
 
-    # ── Artefactos Docker ─────────────────────────────────
     logger.info("=" * 60)
     logger.info("ARTEFACTOS DE DESPLIEGUE")
+    logger.info("  use_case : %s", args.use_case)
     logger.info("  proyecto : %s", cfg["project_code"])
     logger.info("  imagen   : %s", d.get("docker_image"))
     logger.info("  puerto   : %d", port)
     logger.info("=" * 60)
 
-    generate_dockerfile(repo_root, cfg)
-    generate_dockerignore(repo_root, cfg)
-    generate_requirements_deploy(repo_root)
-    generate_deploy_summary(repo_root, meta, cfg)
+    if not args.serve:
+        cfg["use_case"] = args.use_case
+        generate_dockerfile(repo_root, cfg)
+        generate_dockerignore(repo_root, cfg)
+        generate_requirements_deploy(repo_root)
+        generate_deploy_summary(repo_root, meta, cfg)
+        logger.info("docker build -t %s:latest .", d.get("docker_image"))
+        logger.info("docker run -p %d:%d %s:latest",
+                    d.get("docker_port"), d.get("docker_port"), d.get("docker_image"))
 
-    logger.info("docker build -t %s:latest .", d.get("docker_image"))
-    logger.info("docker run -p %d:%d %s:latest",
-                d.get("docker_port"), d.get("docker_port"), d.get("docker_image"))
-
-    # ── Flask ─────────────────────────────────────────────
     if args.serve:
         logger.info("Flask en %s:%d", host, port)
         app = create_app(model=model, meta=meta, cfg=cfg, repo_root=repo_root)
         app.run(host=host, port=port, debug=False)
     else:
-        # Demo
-        csv_path = repo_root / cfg["paths"]["base_data_csv"]
-        if not csv_path.exists():
-            csv_path = Path(__file__).resolve().parent / cfg["paths"]["base_data_csv"]
+        csv_path = Path(cfg["paths"]["base_data_csv"])
         if csv_path.exists():
             raw_df = pd.read_csv(csv_path)
             result = predict_batch(
                 raw_df.tail(50).copy(),
                 model=model, meta=meta, cfg=cfg, repo_root=repo_root,
             )
+            event_meta = get_event_metadata(cfg)
             logger.info("Demo:\n%s",
-                result[["score_mora","pred_mora","riesgo","fecha_prediccion"]]
+                result[[event_meta["score_col"], event_meta["pred_col"], "risk_level", "fecha_prediccion"]]
                 .head(10).to_string(index=False))
-            logger.info("Mora predicha: %d/%d (%.1f%%)",
-                result["pred_mora"].sum(), len(result),
-                result["pred_mora"].mean() * 100)
-            
+            logger.info("Evento predicho: %d/%d (%.1f%%)",
+                result[event_meta["pred_col"]].sum(), len(result),
+                result[event_meta["pred_col"]].mean() * 100)
+
 # ──────────────────────────────────────────────────────────

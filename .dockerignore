@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+*-venv/
 .venv/
 venv/
 .env
@@ -11,18 +12,30 @@ venv/
 .git/
 .gitignore
 
-# Notebooks
+# Notebooks y análisis
 *.ipynb
 .ipynb_checkpoints/
 
-# Datos crudos (cfg.paths.base_data_csv / train_reference_file)
-Base_de_datos.csv
-mlops_pipeline/artifacts/train_reference.csv
+# Datos crudos y de estado
+src/Base_de_datos.csv
+data/
+artifacts/scoring_mora/train_reference.csv
 
 # Reports (se generan en ejecución)
-mlops_pipeline/reports/
+reports/scoring_mora/
 
-# CI/CD
-.sonarcloud.properties
+# Tests y cobertura
+tests/
+coverage.xml
+.pytest_cache/
+
+# Scripts de entorno y ejecución local
+set_up.sh
+set_up.bat
+run_pipeline.sh
+run_pipeline.bat
+
+# CI/CD y docs
+.github/
 sonar-project.properties
-Jenkinsfile
+README.md
