@@ -124,7 +124,7 @@ class HeuristicRuleModel(BaseEstimator, ClassifierMixin):
         self.rules       = rules or []
         self.min_signals = min_signals
 
-    def fit(self, X, y=None):
+    def fit(self, _x=None, y=None):
         if not self.rules:
             raise ValueError(
                 "HeuristicRuleModel.rules está vacío. "
@@ -296,7 +296,7 @@ def cross_validate_heuristic(
     n_splits: int = 10,
 ) -> tuple[pd.DataFrame, dict]:
     """KFold(10) cross-validation. Retorna (cv_df, train_scores_dict)."""
-    model_pipe      = Pipeline(steps=[("model", model)])
+    model_pipe      = Pipeline(steps=[("model", model)], memory=None)
     kfold           = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     scoring_metrics = ["accuracy", "f1", "precision", "recall"]
 
@@ -327,7 +327,7 @@ def cross_validate_heuristic(
 
 def plot_cv_boxplot(cv_df: pd.DataFrame, save_path: Path) -> None:
     """Boxplot de variabilidad entre folds."""
-    fig, ax = plt.subplots(figsize=(8, 4))
+    _, ax = plt.subplots(figsize=(8, 4))
     cv_df.plot.box(
         ax=ax,
         title="Cross-Validation Boxplot — HeuristicRuleModel",
@@ -352,7 +352,7 @@ def plot_train_vs_cv(
     x       = np.arange(len(metrics))
     width   = 0.35
 
-    fig, ax = plt.subplots(figsize=(8, 4))
+    _, ax = plt.subplots(figsize=(8, 4))
     ax.bar(x - width / 2,
            [train_scores[m] for m in metrics], width,
            label="Train Score", color="#1D9E75", alpha=0.85)
@@ -380,16 +380,18 @@ def plot_learning_curve(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
     save_path: Path,
-    scoring:    str = "recall",
-    n_shuffles: int = 50,
+    scoring:    str  = "recall",
+    n_shuffles: int  = 50,
+    test_size:  float = 0.2,
 ) -> None:
     """
-    Learning curve con ShuffleSplit(50).
+    Learning curve con ShuffleSplit.
     Panel izquierdo : score vs tamaño del dataset (Consistency).
     Panel derecho   : fit time vs tamaño del dataset (Scalability).
+    n_shuffles y test_size se leen de config.training.learning_curve_config.
     """
-    model_pipe = Pipeline(steps=[("model", model)])
-    cv = ShuffleSplit(n_splits=n_shuffles, test_size=0.2, random_state=42)
+    model_pipe = Pipeline(steps=[("model", model)], memory=None)
+    cv = ShuffleSplit(n_splits=n_shuffles, test_size=test_size, random_state=42)
 
     train_sizes, train_scores, test_scores, fit_times, _ = learning_curve(
         model_pipe, X_train, y_train,
@@ -405,7 +407,7 @@ def plot_learning_curve(
     fit_mean   = fit_times.mean(axis=1)
     fit_std    = fit_times.std(axis=1)
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    _, axes = plt.subplots(1, 2, figsize=(13, 5))
 
     ax = axes[0]
     ax.plot(train_sizes, train_mean, "o-", color="#1D9E75", label="Training score")
@@ -493,20 +495,29 @@ if __name__ == "__main__":
     metrics_train = evaluate_heuristic(model, X_train_base, y_train, "Train", event_label)
     metrics_test  = evaluate_heuristic(model, X_test_base,  y_test,  "Test",  event_label)
 
-    # 5. Cross-validation KFold(10)
-    logger.info("Ejecutando cross-validation KFold(10)...")
-    cv_df, train_scores = cross_validate_heuristic(model, X_train_base, y_train, n_splits=10)
+    # 5. Cross-validation KFold(n)
+    train_cfg = cfg.get("training", {})
+    heuristic_cv_splits = int(train_cfg.get("heuristic_cv_splits", 10))
+    lc_cfg = train_cfg.get("learning_curve_config", {})
+
+    logger.info("Ejecutando cross-validation KFold(%d)...", heuristic_cv_splits)
+    cv_df, train_scores = cross_validate_heuristic(
+        model, X_train_base, y_train, n_splits=heuristic_cv_splits
+    )
 
     plot_cv_boxplot(cv_df, save_path=reports_dir / "heuristic_cv_boxplot.png")
     plot_train_vs_cv(cv_df, train_scores, save_path=reports_dir / "heuristic_train_vs_cv.png")
 
-    # 6. Learning curve (ShuffleSplit 50)
-    logger.info("Generando learning curve (ShuffleSplit n=50)...")
+    # 6. Learning curve (ShuffleSplit — config-driven)
+    n_shuffles = int(lc_cfg.get("n_splits", 50))
+    lc_test_size = float(lc_cfg.get("test_size", 0.2))
+    logger.info("Generando learning curve (ShuffleSplit n=%d)...", n_shuffles)
     plot_learning_curve(
         model, X_train_base, y_train,
         save_path=reports_dir / "heuristic_learning_curve.png",
         scoring="recall",
-        n_shuffles=50,
+        n_shuffles=n_shuffles,
+        test_size=lc_test_size,
     )
 
     # 7. Guardar baseline

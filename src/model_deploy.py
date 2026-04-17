@@ -434,6 +434,7 @@ def generate_dockerfile(repo_root: Path, cfg: dict) -> None:
     d           = cfg.get("deploy", {})
     image       = d.get("docker_image", cfg["project_code"] + "-scoring")
     docker_port = d.get("docker_port", 5000)
+    use_case    = cfg["use_case"]
 
     content = f"""# Dockerfile — {image}
 # Proyecto: {cfg["project_code"]}  |  API: {d.get("api_version", "v1")}
@@ -467,9 +468,9 @@ COPY {cfg["paths"]["pipeline_base_file"]} ./{cfg["paths"]["pipeline_base_file"]}
 EXPOSE {docker_port}
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \\
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:{docker_port}/health')"
+  CMD python -c "import urllib.request, os; urllib.request.urlopen(f'http://localhost:{{os.environ.get(\"PORT\", {docker_port})}}/health')"
 
-CMD ["python", "mlops_pipeline/src/model_deploy.py", "--serve", "--host", "0.0.0.0", "--port", "{docker_port}", "--use-case", "{cfg["use_case"]}"]
+CMD ["sh", "-c", "python mlops_pipeline/src/model_deploy.py --serve --host 0.0.0.0 --port ${{PORT}} --use-case {use_case}"]
 """
     # El Dockerfile va en la raíz del git repo (repo_root/mlops_pipeline/),
     # NO en la carpeta padre del curso (repo_root/).

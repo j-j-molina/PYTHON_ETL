@@ -30,6 +30,6 @@ COPY artifacts/scoring_mora/pipeline_base.pkl ./artifacts/scoring_mora/pipeline_
 EXPOSE 5000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"
+  CMD python -c "import urllib.request, os; urllib.request.urlopen(f'http://localhost:{os.environ.get("PORT", 5000)}/health')"
 
-CMD ["python", "mlops_pipeline/src/model_deploy.py", "--serve", "--host", "0.0.0.0", "--port", "5000", "--use-case", "scoring_mora"]
+CMD ["sh", "-c", "python mlops_pipeline/src/model_deploy.py --serve --host 0.0.0.0 --port ${PORT} --use-case scoring_mora"]

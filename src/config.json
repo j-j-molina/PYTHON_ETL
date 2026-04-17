@@ -109,13 +109,21 @@
           "salario_cliente",
           "creditos_sectorFinanciero",
           "creditos_sectorCooperativo",
-          "creditos_sectorReal"
+          "creditos_sectorReal",
+          "antiguedad_prestamo_dias",
+          "anio_prestamo",
+          "mes_prestamo",
+          "dia_semana_prestamo"
         ],
         "_drop_cols_reason": {
           "salario_cliente": "EDA IV: redundante con promedio_ingresos_datacredito (IV=0.104 vs IV<0.02). Se reemplaza como denominador en ratios.",
           "creditos_sectorFinanciero": "EDA IV: IV<0.02 (inútil). Información contenida en cant_creditosvigentes.",
           "creditos_sectorCooperativo": "EDA IV: IV<0.02 (inútil). Información contenida en cant_creditosvigentes.",
-          "creditos_sectorReal": "EDA IV: IV<0.02 (inútil). Información contenida en cant_creditosvigentes."
+          "creditos_sectorReal": "EDA IV: IV<0.02 (inútil). Información contenida en cant_creditosvigentes.",
+          "antiguedad_prestamo_dias": "Pseudo-leakage temporal: calculado con fecha_ref fija (2026-02-28), PSI=18.3. Créditos de train siempre más 'antiguos' que test por construcción — el modelo aprende posición temporal, no creditworthiness.",
+          "anio_prestamo": "Proxy directo del split temporal, PSI=2.66. No aporta señal crediticia generalizable.",
+          "mes_prestamo": "Proxy directo del split temporal, PSI=12.6. No aporta señal crediticia generalizable.",
+          "dia_semana_prestamo": "Sin señal crediticia relevante; eliminado junto con las demás temporales."
         },
         "numeric_cols": [
           "puntaje_datacredito",
@@ -130,15 +138,11 @@
           "ratio_cuota_ingresos",
           "ratio_capital_ingresos",
           "ratio_otros_prestamos_ingresos",
-          "dti_aprox",
-          "antiguedad_prestamo_dias",
-          "anio_prestamo",
-          "mes_prestamo"
+          "dti_aprox"
         ],
         "categorical_cols": [
           "tipo_credito",
-          "tipo_laboral",
-          "dia_semana_prestamo"
+          "tipo_laboral"
         ],
         "ordinal_cols": {
           "tendencia_ingresos": [
@@ -289,7 +293,11 @@
       "salario_cliente",
       "creditos_sectorFinanciero",
       "creditos_sectorCooperativo",
-      "creditos_sectorReal"
+      "creditos_sectorReal",
+      "antiguedad_prestamo_dias",
+      "anio_prestamo",
+      "mes_prestamo",
+      "dia_semana_prestamo"
     ],
     "numeric_cols": [
       "puntaje_datacredito",
@@ -304,15 +312,11 @@
       "ratio_cuota_ingresos",
       "ratio_capital_ingresos",
       "ratio_otros_prestamos_ingresos",
-      "dti_aprox",
-      "antiguedad_prestamo_dias",
-      "anio_prestamo",
-      "mes_prestamo"
+      "dti_aprox"
     ],
     "categorical_cols": [
       "tipo_credito",
-      "tipo_laboral",
-      "dia_semana_prestamo"
+      "tipo_laboral"
     ],
     "ordinal_cols": {
       "tendencia_ingresos": [
@@ -375,13 +379,20 @@
     "cv_scoring": "recall",
     "threshold_strategy": "f1",
     "threshold_min_precision": 0.05,
-    "_threshold_strategy_note": "Valores: 'f1' maximiza F1-mora en train | 'recall' maximiza recall con precision >= threshold_min_precision | 'prior' usa la tasa de mora del train como umbral directo.",
+    "_threshold_strategy_note": "Valores: 'f1' maximiza F1-mora en train | 'recall' maximiza recall con precision >= threshold_min_precision | 'prior' usa la tasa de mora del train como umbral directo. F1 es el balance más defensible con datos limitados (29 eventos en test). 'recall' con min_precision < tasa_base produce clasificador trivial.",
+    "learning_curve_config": {
+      "n_splits": 30,
+      "test_size": 0.2,
+      "_note": "Parámetros para ShuffleSplit en learning curves de model_training.py y heuristic_model.py."
+    },
+    "heuristic_cv_splits": 10,
     "selection_weights": {
-      "roc_auc": 0.4,
-      "pr_auc": 0.3,
-      "recall": 0.2,
+      "roc_auc": 0.3,
+      "pr_auc": 0.2,
+      "recall": 0.4,
       "gap": 0.1
     },
+    "_selection_weights_note": "Para scoring de mora: recall tiene mayor peso (0.4) porque FN = otorgar crédito a quien no pagará = pérdida directa. ROC-AUC y PR-AUC secundarios.",
     "models": [
       {
         "name": "Logistic Regression",
@@ -434,7 +445,17 @@
   },
   "monitoring": {
     "psi_threshold": 0.2,
+    "psi_thresholds": {
+      "stable": 0.10,
+      "monitor": 0.20,
+      "_note": "PSI < stable → Estable | stable <= PSI < monitor → Monitorear | PSI >= monitor → Drift"
+    },
+    "psi_n_bins": 10,
     "min_rows": 200
+  },
+  "logging": {
+    "level": "INFO",
+    "_note": "Valores válidos: DEBUG, INFO, WARNING, ERROR, CRITICAL. Puede sobreescribirse con env var LOG_LEVEL."
   },
   "deploy": {
     "host": "127.0.0.1",
