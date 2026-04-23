@@ -6,15 +6,13 @@ pipeline {
     // push / merge a la rama Master
     // ──────────────────────────────────────────────
     triggers {
-        pollSCM('H/5 * * * *')  // Revisa cambios en GitHub cada 5 minutos
-        // Si tienes webhook configurado en GitHub, agrega también:
-        // githubPush()
+        pollSCM('H/5 * * * *')
     }
 
     environment {
         PYTHON    = 'python3'
         VENV_DIR  = 'venv'
-        EMAIL_TO  = 'tu-correo@ejemplo.com'   // ← cambia por tu correo
+        EMAIL_TO  = 'jjmolinaz1510@gmail.com'
     }
 
     options {
@@ -34,8 +32,6 @@ pipeline {
                     branches: [[name: '*/Master']],
                     userRemoteConfigs: [[
                         url: 'https://github.com/j-j-molina/mlops_pipeline.git'
-                        // Si el repo es privado agrega:
-                        // credentialsId: 'github-credentials'
                     ]]
                 ])
             }
