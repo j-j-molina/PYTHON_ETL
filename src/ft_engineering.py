@@ -863,11 +863,77 @@ def _validate_columns(df: pd.DataFrame, cfg: dict) -> None:
         )
     logger.info("Validacion de columnas OK — %d features presentes.", len(expected))
 
+def load_features_from_cache(
+    use_case: str = "scoring_mora",
+    config_path: Optional[Path] = None,
+) -> tuple:
+    """
+    Carga los artefactos de features pre-computados por ft_engineering.py.
+
+    Devuelve la misma tupla de 8 elementos que build_features(return_base=True):
+        X_train, X_test, y_train, y_test,
+        pipeline_ml, pipeline_base,
+        X_train_base, X_test_base
+
+    Lanza FileNotFoundError si los artefactos no existen (ejecuta ft_engineering
+    primero).
+    """
+    cfg_global, _ = load_config(config_path)
+    cfg = resolve_cfg(cfg_global, use_case)
+    artifacts_dir = Path(cfg["paths"]["artifacts_dir"])
+    event_col = cfg["target"]["event_col"]
+
+    required = [
+        artifacts_dir / "X_train.csv",
+        artifacts_dir / "X_test.csv",
+        artifacts_dir / "X_train_base.csv",
+        artifacts_dir / "X_test_base.csv",
+        artifacts_dir / "y_train.csv",
+        artifacts_dir / "y_test.csv",
+        artifacts_dir / "pipeline_ml.pkl",
+        artifacts_dir / "pipeline_base.pkl",
+    ]
+    missing = [str(p) for p in required if not p.exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"Caché de features incompleta. Ejecuta ft_engineering.py primero.\n"
+            f"Faltan: {missing}"
+        )
+
+    X_train      = pd.read_csv(artifacts_dir / "X_train.csv")
+    X_test       = pd.read_csv(artifacts_dir / "X_test.csv")
+    X_train_base = pd.read_csv(artifacts_dir / "X_train_base.csv")
+    X_test_base  = pd.read_csv(artifacts_dir / "X_test_base.csv")
+    y_train      = pd.read_csv(artifacts_dir / "y_train.csv")[event_col].values
+    y_test       = pd.read_csv(artifacts_dir / "y_test.csv")[event_col].values
+
+    import joblib as _joblib
+    pipeline_ml   = _joblib.load(artifacts_dir / "pipeline_ml.pkl")
+    pipeline_base = _joblib.load(artifacts_dir / "pipeline_base.pkl")
+
+    logger.info(
+        "Features cargadas desde caché: %s  |  X_train=%s  X_test=%s",
+        artifacts_dir, X_train.shape, X_test.shape,
+    )
+    return X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base, X_train_base, X_test_base
+
+
 # ──────────────────────────────────────────────────────────
 #  EJECUCION STANDALONE
 
 if __name__ == "__main__":
     import argparse
+    import inspect
+    import sys as _sys
+
+    # Fijar __module__ de las clases antes de hacer pickle, para que se
+    # serialicen como 'ft_engineering.Clase' en lugar de '__main__.Clase'.
+    # Así los pkl son cargables por cualquier script que importe ft_engineering.
+    _this_mod = _sys.modules[__name__]
+    for _cls_name, _cls in inspect.getmembers(_this_mod, inspect.isclass):
+        if _cls.__module__ == "__main__":
+            _cls.__module__ = "ft_engineering"
+    _sys.modules.setdefault("ft_engineering", _this_mod)
 
     parser = argparse.ArgumentParser(description="Feature engineering — pipeline MLOps.")
     parser.add_argument(
@@ -886,14 +952,19 @@ if __name__ == "__main__":
     artifacts_dir = Path(cfg_resolved["paths"]["artifacts_dir"])
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-    X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base = build_features(
+    (X_train, X_test, y_train, y_test,
+     pipeline_ml, pipeline_base,
+     X_train_base, X_test_base) = build_features(
         use_case=args.use_case,
         raw_path=Path(args.raw_path) if args.raw_path else None,
         return_dataframe=True,
+        return_base=True,
     )
 
     X_train.to_csv(artifacts_dir / "X_train.csv", index=False)
     X_test.to_csv(artifacts_dir  / "X_test.csv",  index=False)
+    X_train_base.to_csv(artifacts_dir / "X_train_base.csv", index=False)
+    X_test_base.to_csv(artifacts_dir  / "X_test_base.csv",  index=False)
     event_col = cfg_resolved["target"]["event_col"]
     pd.Series(y_train, name=event_col).to_csv(artifacts_dir / "y_train.csv", index=False)
     pd.Series(y_test,  name=event_col).to_csv(artifacts_dir / "y_test.csv",  index=False)
@@ -901,8 +972,6 @@ if __name__ == "__main__":
     with open(artifacts_dir / "pipeline_ml.pkl", "wb") as fh:
         pickle.dump(pipeline_ml, fh)
 
-    # pipeline_base: ImputacionSegmentada + Winsorizar + EliminarColumnas
-    # Ajustado SOLO sobre train — caps y medianas libres de leakage.
     with open(artifacts_dir / "pipeline_base.pkl", "wb") as fh:
         pickle.dump(pipeline_base, fh)
 

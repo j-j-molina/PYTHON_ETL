@@ -68,7 +68,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier, HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
@@ -735,6 +735,8 @@ def build_model_definitions(train_cfg: dict, y_train: np.ndarray) -> list[tuple[
             estimator = RandomForestClassifier(**params)
         elif model_type == "gradient_boosting":
             estimator = GradientBoostingClassifier(**params)
+        elif model_type == "hist_gradient_boosting":
+            estimator = HistGradientBoostingClassifier(**params)
         else:
             raise ValueError(f"Tipo de modelo no soportado en config.training.models: {model_type}")
 
@@ -752,7 +754,7 @@ if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-    from ft_engineering import build_features, load_config, resolve_cfg
+    from ft_engineering import load_features_from_cache, load_config, resolve_cfg
 
     parser = argparse.ArgumentParser(
         description="model_training — entrenamiento y selección del mejor modelo"
@@ -789,11 +791,10 @@ if __name__ == "__main__":
     event_label = cfg["target"]["event_col"]
 
     # ── Features ─────────────────────────────────────────
-    logger.info("Cargando features desde ft_engineering para use_case='%s'...", args.use_case)
-    X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base = build_features(
+    logger.info("Cargando features desde caché para use_case='%s'...", args.use_case)
+    X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base, _, _ = load_features_from_cache(
         use_case=args.use_case,
         config_path=Path(args.config) if args.config else None,
-        return_dataframe=True,
     )
     feature_names = list(X_train.columns)
     logger.info("X_train: %s | X_test: %s", X_train.shape, X_test.shape)

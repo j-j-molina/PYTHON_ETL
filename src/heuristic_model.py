@@ -451,7 +451,7 @@ if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-    from ft_engineering import build_features, load_config, resolve_cfg
+    from ft_engineering import load_features_from_cache, load_config, resolve_cfg
 
     parser = argparse.ArgumentParser(
         description="Baseline heurístico basado en reglas — pipeline MLOps."
@@ -480,11 +480,9 @@ if __name__ == "__main__":
     # (ej. puntaje_datacredito < 760). Si recibiera la salida de pipeline_ml
     # (z-scores), los thresholds serían imposibles (z < 760 siempre True,
     # z > 5 o z > 12 nunca True) → Recall = 0.
-    logger.info("Cargando features para use_case='%s'...", args.use_case)
-    X_train_ml, X_test_ml, y_train, y_test, _, _, X_train_base, X_test_base = build_features(
+    logger.info("Cargando features desde caché para use_case='%s'...", args.use_case)
+    _, _, y_train, y_test, _, _, X_train_base, X_test_base = load_features_from_cache(
         use_case=args.use_case,
-        return_dataframe=True,
-        return_base=True,
     )
 
     # 3. Modelo construido desde config — sin hardcodeo
