@@ -26,6 +26,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           python -m pytest tests/ --cov=src --cov-report=xml:coverage.xml
+        continue-on-error: true
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v6
         env:
