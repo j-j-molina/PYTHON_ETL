@@ -586,10 +586,8 @@ if __name__ == "__main__":
     event_label  = meta.get("event_col", cfg["target"]["event_col"])
     neg_label    = cfg["target"].get("negative_class_label", "Negativo")
 
-    safe_name     = re.sub(r'[\x00-\x1f\x7f]', '_', str(model_name))
-    safe_use_case = re.sub(r'[\x00-\x1f\x7f]', '_', str(args.use_case))
-    logger.info("Modelo: %s | Threshold: %.4f | use_case=%s",
-                safe_name, threshold, safe_use_case)
+    safe_name = re.sub(r'[\x00-\x1f\x7f]', '_', str(model_name))
+    logger.info("Modelo: %s | Threshold: %.4f", safe_name, threshold)
 
     logger.info("Cargando features desde caché...")
     X_train, X_test, y_train, y_test, _, _, _, _ = load_features_from_cache(

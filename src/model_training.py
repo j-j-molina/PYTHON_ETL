@@ -838,9 +838,7 @@ if __name__ == "__main__":
     model_definitions = build_model_definitions(train_cfg, y_train)
 
     logger.info("=" * 60)
-    safe_use_case = re.sub(r'[\x00-\x1f\x7f]', '_', str(args.use_case))
-    logger.info("ENTRENAMIENTO DE MODELOS | use_case='%s' | threshold_strategy='%s'",
-                safe_use_case, threshold_strategy)
+    logger.info("ENTRENAMIENTO DE MODELOS | threshold_strategy='%s'", threshold_strategy)
     logger.info("=" * 60)
 
     models_data: list[dict] = []
