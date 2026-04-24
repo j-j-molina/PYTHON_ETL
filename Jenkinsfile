@@ -16,9 +16,12 @@ pipeline {
     parameters {
         string(name: 'USE_CASE', defaultValue: 'scoring_mora', description: 'Caso de uso configurado en src/config.json')
         string(name: 'EMAIL_TO', defaultValue: 'juanj.molina@upb.edu.co', description: 'Correo para notificación final')
+        booleanParam(name: 'RESET_INCREMENTAL_STATE', defaultValue: true, description: 'Reinicia el estado incremental antes de la ingesta')
     }
 
     environment {
+        GOOGLE_APPLICATION_CREDENTIALS = '/var/jenkins_home/.config/gcloud/application_default_credentials.json'
+        GOOGLE_CLOUD_PROJECT = 'pro-cientificos-jj'
         VENV_DIR = '.venv_jenkins'
         OUT_DIR  = 'jenkins_outputs'
     }
@@ -63,43 +66,43 @@ pipeline {
                     set -eu
 
                     required_paths="
-        src
-        src/Cargar_datos.py
-        src/comprension_eda.ipynb
-        src/config.json
-        src/ft_engineering.py
-        src/heuristic_model.py
-        src/model_training.py
-        src/model_evaluation.py
-        src/model_monitoring.py
-        src/model_deploy.py
-        tests
-        tests/test_pipeline.py
-        Dockerfile
-        README.md
-        requirements.txt
-        requirements_deploy.txt
-        run_pipeline.sh
-        run_pipeline.bat
-        set_up.sh
-        set_up.bat
-        sonar-project.properties
-        "
+src
+src/Cargar_datos.py
+src/comprension_eda.ipynb
+src/config.json
+src/ft_engineering.py
+src/heuristic_model.py
+src/model_training.py
+src/model_evaluation.py
+src/model_monitoring.py
+src/model_deploy.py
+tests
+tests/test_pipeline.py
+Dockerfile
+README.md
+requirements.txt
+requirements_deploy.txt
+run_pipeline.sh
+run_pipeline.bat
+set_up.sh
+set_up.bat
+sonar-project.properties
+"
 
                     missing=0
 
                     for path in $required_paths; do
-                    if [ -e "$path" ]; then
+                      if [ -e "$path" ]; then
                         echo "[OK] $path"
-                    else
+                      else
                         echo "[MISSING] $path"
                         missing=1
-                    fi
+                      fi
                     done
 
                     if [ "$missing" -ne 0 ]; then
-                    echo "[ERROR] La estructura del repositorio no cumple."
-                    exit 1
+                      echo "[ERROR] La estructura del repositorio no cumple."
+                      exit 1
                     fi
 
                     echo "[INFO] Estructura validada correctamente."
@@ -116,8 +119,28 @@ pipeline {
                     python3 -m venv "${VENV_DIR}"
                     . "${VENV_DIR}/bin/activate"
 
-                    python -m pip install --upgrade pip
+                    python -m pip install --upgrade pip setuptools wheel
                     pip install -r requirements.txt
+                    pip install pytest pytest-cov
+                '''
+            }
+        }
+
+        stage('Reset estado incremental') {
+            when {
+                expression { return params.RESET_INCREMENTAL_STATE }
+            }
+            steps {
+                sh '''
+                    set -euo pipefail
+
+                    rm -f "data/state/${USE_CASE}_ingestion_state.json"
+                    rm -f "data/raw/${USE_CASE}.parquet"
+
+                    mkdir -p data/state
+                    mkdir -p data/raw
+
+                    echo "[INFO] Estado incremental reiniciado para ${USE_CASE}"
                 '''
             }
         }
@@ -141,7 +164,7 @@ pipeline {
                     mkdir -p "$WORKSPACE/${OUT_DIR}/tests"
                     . "${VENV_DIR}/bin/activate"
 
-                    pytest tests/ -v --tb=short \
+                    python -m pytest tests/ -v --tb=short \
                       --junitxml="$WORKSPACE/${OUT_DIR}/tests/test-results.xml" \
                       --cov=src \
                       --cov-report=xml:"$WORKSPACE/${OUT_DIR}/tests/coverage.xml"
@@ -165,8 +188,8 @@ pipeline {
                     chmod +x run_pipeline.sh
                     bash run_pipeline.sh
 
-                    cp -R artifacts "$WORKSPACE/${OUT_DIR}/pipeline/" || true
-                    cp -R reports "$WORKSPACE/${OUT_DIR}/pipeline/" || true
+                    cp -R artifacts "$WORKSPACE/${OUT_DIR}/pipeline/" 2>/dev/null || true
+                    cp -R reports "$WORKSPACE/${OUT_DIR}/pipeline/" 2>/dev/null || true
                     cp -f Dockerfile "$WORKSPACE/${OUT_DIR}/pipeline/" 2>/dev/null || true
                     cp -f requirements_deploy.txt "$WORKSPACE/${OUT_DIR}/pipeline/" 2>/dev/null || true
                     cp -f .dockerignore "$WORKSPACE/${OUT_DIR}/pipeline/" 2>/dev/null || true
