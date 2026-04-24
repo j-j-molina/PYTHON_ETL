@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 from pathlib import Path
 
 import joblib
@@ -585,8 +586,8 @@ if __name__ == "__main__":
     event_label  = meta.get("event_col", cfg["target"]["event_col"])
     neg_label    = cfg["target"].get("negative_class_label", "Negativo")
 
-    safe_name     = str(model_name).replace('\n', ' ').replace('\r', ' ')
-    safe_use_case = str(args.use_case).replace('\n', ' ').replace('\r', ' ')
+    safe_name     = re.sub(r'[\x00-\x1f\x7f]', '_', str(model_name))
+    safe_use_case = re.sub(r'[\x00-\x1f\x7f]', '_', str(args.use_case))
     logger.info("Modelo: %s | Threshold: %.4f | use_case=%s",
                 safe_name, threshold, safe_use_case)
 
