@@ -672,8 +672,10 @@ if __name__ == "__main__":
     score_col  = event_meta["score_col"]
     pred_col   = event_meta["pred_col"]
     actual_col = event_meta["actual_col"]
+    safe_name     = str(model_name).replace('\n', ' ').replace('\r', ' ')
+    safe_use_case = str(args.use_case).replace('\n', ' ').replace('\r', ' ')
     logger.info("Modelo: %s | Threshold: %.4f | use_case=%s",
-                model_name, threshold, args.use_case)
+                safe_name, threshold, safe_use_case)
 
     ref_path = Path(paths["train_reference_file"])
     if not ref_path.exists():
@@ -841,8 +843,8 @@ if __name__ == "__main__":
     logger.info("=" * 55)
     logger.info("MONITOREO COMPLETADO")
     logger.info("=" * 55)
-    logger.info("use_case        : %s", args.use_case)
-    logger.info("Modelo          : %s", model_name)
+    logger.info("use_case        : %s", safe_use_case)
+    logger.info("Modelo          : %s", safe_name)
     logger.info("PSI output      : %.4f  (%s)",
                 psi_score_output,
                 "ALERTA" if psi_score_output > psi_threshold else "OK")

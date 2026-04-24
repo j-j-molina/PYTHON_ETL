@@ -703,11 +703,11 @@ def _default_model_specs() -> list[dict]:
         {"name": "Logistic Regression", "type": "logistic_regression",
          "params": {"class_weight": "balanced", "max_iter": 1000, "C": 0.1, "solver": "lbfgs", "random_state": 42}},
         {"name": "Decision Tree", "type": "decision_tree",
-         "params": {"class_weight": "balanced", "max_depth": 5, "min_samples_leaf": 20, "random_state": 42}},
+         "params": {"class_weight": "balanced", "max_depth": 5, "min_samples_leaf": 20, "ccp_alpha": 0.0, "random_state": 42}},
         {"name": "Random Forest", "type": "random_forest",
-         "params": {"class_weight": "balanced", "n_estimators": 200, "max_depth": 8, "min_samples_leaf": 10, "n_jobs": -1, "random_state": 42}},
+         "params": {"class_weight": "balanced", "n_estimators": 200, "max_depth": 8, "min_samples_leaf": 10, "ccp_alpha": 0.0, "n_jobs": -1, "random_state": 42}},
         {"name": "Gradient Boosting", "type": "gradient_boosting",
-         "params": {"n_estimators": 200, "learning_rate": 0.05, "max_depth": 4, "min_samples_leaf": 10, "subsample": 0.8, "random_state": 42},
+         "params": {"n_estimators": 200, "learning_rate": 0.05, "max_depth": 4, "min_samples_leaf": 10, "max_features": None, "subsample": 0.8, "random_state": 42},
          "fit_strategy": "sample_weight_positive"},
     ]
 
@@ -727,17 +727,34 @@ def build_model_definitions(train_cfg: dict, y_train: np.ndarray) -> list[tuple[
 
         # Garantizar reproducibilidad si config no incluye random_state
         params.setdefault("random_state", 42)
+        rs = params.pop("random_state")
 
         if model_type == "logistic_regression":
-            estimator = LogisticRegression(**params)
+            estimator = LogisticRegression(random_state=rs, **params)
         elif model_type == "decision_tree":
-            estimator = DecisionTreeClassifier(**params)
+            estimator = DecisionTreeClassifier(
+                random_state=rs,
+                ccp_alpha=params.pop("ccp_alpha", 0.0),
+                **params,
+            )
         elif model_type == "random_forest":
-            estimator = RandomForestClassifier(**params)
+            estimator = RandomForestClassifier(
+                random_state=rs,
+                ccp_alpha=params.pop("ccp_alpha", 0.0),
+                **params,
+            )
         elif model_type == "gradient_boosting":
-            estimator = GradientBoostingClassifier(**params)
+            estimator = GradientBoostingClassifier(
+                random_state=rs,
+                max_features=params.pop("max_features", None),
+                **params,
+            )
         elif model_type == "hist_gradient_boosting":
-            estimator = HistGradientBoostingClassifier(**params)
+            estimator = HistGradientBoostingClassifier(
+                random_state=rs,
+                learning_rate=params.pop("learning_rate", 0.1),
+                **params,
+            )
         else:
             raise ValueError(f"Tipo de modelo no soportado en config.training.models: {model_type}")
 
@@ -793,7 +810,8 @@ if __name__ == "__main__":
     neg_label   = cfg["target"].get("negative_class_label", "Negativo")
 
     # ── Features ─────────────────────────────────────────
-    logger.info("Cargando features desde caché para use_case='%s'...", args.use_case)
+    safe_use_case = str(args.use_case).replace('\n', ' ').replace('\r', ' ')
+    logger.info("Cargando features desde caché para use_case='%s'...", safe_use_case)
     X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base, _, _ = load_features_from_cache(
         use_case=args.use_case,
         config_path=Path(args.config) if args.config else None,

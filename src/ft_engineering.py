@@ -82,6 +82,19 @@ logger = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────────────────
+#  File-name constants — single source of truth for artifact filenames
+
+_CONFIG_FILENAME   = "config.json"
+_FILE_X_TRAIN      = "X_train.csv"
+_FILE_X_TEST       = "X_test.csv"
+_FILE_X_TRAIN_BASE = "X_train_base.csv"
+_FILE_X_TEST_BASE  = "X_test_base.csv"
+_FILE_Y_TRAIN      = "y_train.csv"
+_FILE_Y_TEST       = "y_test.csv"
+_FILE_PIPELINE_ML  = "pipeline_ml.pkl"
+_FILE_PIPELINE_BASE = "pipeline_base.pkl"
+
+# ──────────────────────────────────────────────────────────
 #  Utilidades: config y repo
 
 def _find_repo_root(start: Path) -> Path:
@@ -103,19 +116,19 @@ def load_config(config_path: Optional[Path] = None) -> tuple[dict, Path]:
 
     candidates = [
         config_path,
-        here / "config.json",
-        repo_root / "mlops_pipeline" / "src" / "config.json",
-        repo_root / "config.json",
+        here / _CONFIG_FILENAME,
+        repo_root / "mlops_pipeline" / "src" / _CONFIG_FILENAME,
+        repo_root / _CONFIG_FILENAME,
     ]
     path = next((p for p in candidates if p is not None and Path(p).exists()), None)
     if path is None:
         raise FileNotFoundError(
-            "No se encontró config.json. "
+            f"No se encontró {_CONFIG_FILENAME}. "
             "Colócalo en mlops_pipeline/src/ o pasa la ruta explícita."
         )
     with open(path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
-    logger.info("config.json cargado: %s", path)
+    logger.info("%s cargado: %s", _CONFIG_FILENAME, path)
     return cfg, repo_root
 
 
@@ -211,78 +224,67 @@ class CrearFeaturesDerivadas(BaseEstimator, TransformerMixin):
     def __init__(self, cfg: dict):
         self.cfg = cfg
 
-    def fit(self, X: pd.DataFrame, y=None):
+    def fit(self, _x=None, _y=None):
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         X = X.copy()
         derived  = self.cfg["feature_engineering"]["derived_features"]
         date_col = self.cfg["split"]["date_col"]
+        self._apply_ratio_features(X, derived)
+        self._apply_sum_pct_features(X, derived)
+        self._apply_temporal_features(X, derived, date_col)
+        self._apply_bucketing(X, derived)
+        logger.info("CrearFeaturesDerivadas: %d columnas en el DataFrame", X.shape[1])
+        return X
 
-        # --- Ratios: name = numerator / denominator ------------------
-        # "numerator_sum": [colA, colB] suma antes de dividir
-        # "denominator_add": N  → suma N al denominador antes de dividir (evita /0)
+    def _apply_ratio_features(self, X: pd.DataFrame, derived: dict) -> None:
         for r in derived.get("ratio_features", []):
             if r["name"] in X.columns:
                 continue
             denom = pd.to_numeric(X[r["denominator"]], errors="coerce")
             add   = r.get("denominator_add", 0)
             denom = (denom + add) if add else denom.replace(0, np.nan)
-            numer = sum(X[c] for c in r["numerator_sum"]) if "numerator_sum" in r else X[r["numerator"]]
+            numer = (sum(X[c] for c in r["numerator_sum"])
+                     if "numerator_sum" in r else X[r["numerator"]])
             X[r["name"]] = numer / denom
 
-        # --- Sumas: name = sum(cols) ---------------------------------
+    def _apply_sum_pct_features(self, X: pd.DataFrame, derived: dict) -> None:
         for s in derived.get("sum_features", []):
             if s["name"] not in X.columns:
                 X[s["name"]] = sum(X[c] for c in s["cols"])
-
-        # --- Porcentajes sobre columna ya creada --------------------
         for p in derived.get("pct_features", []):
             if p["name"] not in X.columns:
                 X[p["name"]] = X[p["numerator"]] / X[p["denominator"]].replace(0, np.nan)
 
-        # --- Features temporales ------------------------------------
+    def _apply_temporal_features(self, X: pd.DataFrame, derived: dict, date_col: str) -> None:
         temporal_col = derived.get("temporal_col") or date_col
-        if temporal_col in X.columns:
-            if isinstance(X[temporal_col].dtype, pd.DatetimeTZDtype):
-                X[temporal_col] = X[temporal_col].dt.tz_localize(None)
+        if temporal_col not in X.columns:
+            return
+        if isinstance(X[temporal_col].dtype, pd.DatetimeTZDtype):
+            X[temporal_col] = X[temporal_col].dt.tz_localize(None)
+        ref_date = pd.Timestamp(derived["antiguedad_ref_date"]).tz_localize(None)
+        self._add(X, derived.get("year_col",     "anio_prestamo"),          X[temporal_col].dt.year)
+        self._add(X, derived.get("month_col",    "mes_prestamo"),            X[temporal_col].dt.month)
+        self._add(X, derived.get("dayname_col",  "dia_semana_prestamo"),     X[temporal_col].dt.day_name())
+        self._add(X, derived.get("antiguedad_col","antiguedad_prestamo_dias"), (ref_date - X[temporal_col]).dt.days)
 
-            ref_date = pd.Timestamp(derived["antiguedad_ref_date"]).tz_localize(None)
-
-            self._add(X, derived.get("year_col", "anio_prestamo"), X[temporal_col].dt.year)
-            self._add(X, derived.get("month_col", "mes_prestamo"), X[temporal_col].dt.month)
-            self._add(X, derived.get("dayname_col", "dia_semana_prestamo"), X[temporal_col].dt.day_name())
-            self._add(
-                X,
-                derived.get("antiguedad_col", "antiguedad_prestamo_dias"),
-                (ref_date - X[temporal_col]).dt.days)
-
-        # --- Bucketing de edad (legado) ------------------------------
+    def _apply_bucketing(self, X: pd.DataFrame, derived: dict) -> None:
         age_col        = derived.get("age_col",        "edad_cliente")
         age_bucket_col = derived.get("age_bucket_col", "edad_bucket")
         age_bins       = derived.get("edad_bucket_bins")
         age_labels     = derived.get("edad_bucket_labels")
         if age_col in X.columns and age_bins and age_labels:
-            self._add(
-                X, age_bucket_col,
-                pd.cut(X[age_col], bins=age_bins, labels=age_labels, right=False)
-                  .astype(str).replace("nan", np.nan),
-            )
-
-        # --- Bucketing genérico: bucket_features ---------------------
-        # [{"name": "col_bucket", "col": "col_orig", "bins": [...], "labels": [...]}]
+            self._add(X, age_bucket_col,
+                      pd.cut(X[age_col], bins=age_bins, labels=age_labels, right=False)
+                        .astype(str).replace("nan", np.nan))
         for b in derived.get("bucket_features", []):
             if b["name"] in X.columns or b["col"] not in X.columns:
                 continue
-            self._add(
-                X, b["name"],
-                pd.cut(X[b["col"]], bins=b["bins"], labels=b["labels"],
-                       right=b.get("right", False))
-                  .astype(str).replace("nan", np.nan),
-            )
-
-        logger.info("CrearFeaturesDerivadas: %d columnas en el DataFrame", X.shape[1])
-        return X
+            self._add(X, b["name"],
+                      pd.cut(X[b["col"]], bins=b["bins"], labels=b["labels"],
+                             right=b.get("right", False))
+                        .astype(str).replace("nan", np.nan))
 
     @staticmethod
     def _add(df: pd.DataFrame, col: str, values) -> None:
@@ -309,7 +311,7 @@ class LimpiarCategoricas(BaseEstimator, TransformerMixin):
     def __init__(self, cleaners: dict):
         self.cleaners = cleaners
 
-    def fit(self, X: pd.DataFrame, y=None):
+    def fit(self, _x=None, _y=None):
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -343,7 +345,7 @@ class ImputacionSegmentada(BaseEstimator, TransformerMixin):
     def __init__(self, impute_map: dict):
         self.impute_map = impute_map
 
-    def fit(self, X: pd.DataFrame, y=None):
+    def fit(self, X: pd.DataFrame, _y=None):
         self.medians_: dict = {}
         self.global_medians_: dict = {}
         for col, group_col in self.impute_map.items():
@@ -387,7 +389,7 @@ class Winsorizar(BaseEstimator, TransformerMixin):
         self.cols = cols
         self.quantile = quantile
 
-    def fit(self, X: pd.DataFrame, y=None):
+    def fit(self, X: pd.DataFrame, _y=None):
         self.caps_ = {}
         for col in self.cols:
             if col not in X.columns:
@@ -428,7 +430,7 @@ class EliminarColumnas(BaseEstimator, TransformerMixin):
     def __init__(self, cols_to_drop: list):
         self.cols_to_drop = cols_to_drop
 
-    def fit(self, X: pd.DataFrame, y=None):
+    def fit(self, _x=None, _y=None):
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -480,7 +482,7 @@ def build_pipeline_stateless(cfg: dict) -> Pipeline:
         ("limpiar_categoricas", LimpiarCategoricas(
             cleaners=fe_cfg.get("categorical_cleaners", {}),
         )),
-    ])
+    ], memory=None)
 
 # ──────────────────────────────────────────────────────────
 #  PIPELINE BASE (stateful)
@@ -528,7 +530,7 @@ def build_pipeline_base(cfg: dict) -> Pipeline:
         ("eliminar_cols", EliminarColumnas(
             cols_to_drop=all_drop,
         )),
-    ])
+    ], memory=None)
 
 def build_pipeline_basemodel(cfg: dict) -> Pipeline:
     """
@@ -557,7 +559,7 @@ def build_pipeline_basemodel(cfg: dict) -> Pipeline:
         ("eliminar_cols",     EliminarColumnas(
             cols_to_drop=leakage_cols + [date_col],
         )),
-    ])
+    ], memory=None)
 
 # ──────────────────────────────────────────────────────────
 #  PIPELINE ML (ColumnTransformer)
@@ -610,7 +612,7 @@ def build_pipeline_ml(cfg: dict) -> Pipeline:
         "pipeline_ml — numeric: %d | nominal: %d | ordinal: %d",
         len(numeric_features), len(categorical_features), len(ordinal_features),
     )
-    return Pipeline(steps=[("preprocessor", preprocessor)])
+    return Pipeline(steps=[("preprocessor", preprocessor)], memory=None)
 
 
 # ──────────────────────────────────────────────────────────
@@ -781,7 +783,7 @@ def build_features(
     logger.info("=" * 60)
 
     # 1. Config global + resolución por use_case
-    cfg_global, repo_root = load_config(config_path)
+    cfg_global, _ = load_config(config_path)
     cfg = resolve_cfg(cfg_global, use_case)   # cfg efectivo: global + overrides del use_case
 
     date_col  = cfg["split"]["date_col"]
@@ -804,29 +806,29 @@ def build_features(
     train_df, test_df = temporal_split(df_pre, cfg, date_col)
 
     # 5. Separar X / y
-    y_train     = train_df[event_col].values
-    y_test      = test_df[event_col].values
-    X_train_raw = train_df.drop(columns=[event_col], errors="ignore")
-    X_test_raw  = test_df.drop(columns=[event_col],  errors="ignore")
+    y_train      = train_df[event_col].values
+    y_test       = test_df[event_col].values
+    x_train_raw  = train_df.drop(columns=[event_col], errors="ignore")
+    x_test_raw   = test_df.drop(columns=[event_col],  errors="ignore")
 
     # 6. Pasos CON estado: fit SOLO sobre train
     pipeline_base = build_pipeline_base(cfg)
-    X_train_base = pipeline_base.fit_transform(X_train_raw)
-    X_test_base  = apply_pipeline_steps(pipeline_base, X_test_raw)
+    x_train_base = pipeline_base.fit_transform(x_train_raw)
+    x_test_base  = apply_pipeline_steps(pipeline_base, x_test_raw)
 
     # Conservar como DataFrames con nombres de columna para el modelo heurístico
     # (necesita escala original; pipeline_ml aplica StandardScaler encima)
-    if not isinstance(X_train_base, pd.DataFrame):
-        X_train_base = pd.DataFrame(X_train_base)
-    if not isinstance(X_test_base, pd.DataFrame):
-        X_test_base = pd.DataFrame(X_test_base)
+    if not isinstance(x_train_base, pd.DataFrame):
+        x_train_base = pd.DataFrame(x_train_base)
+    if not isinstance(x_test_base, pd.DataFrame):
+        x_test_base = pd.DataFrame(x_test_base)
 
-    _validate_columns(X_train_base, cfg)
+    _validate_columns(x_train_base, cfg)
 
     # 7. Pipeline ML: fit SOLO sobre train
     pipeline_ml = build_pipeline_ml(cfg)
-    X_train = pipeline_ml.fit_transform(X_train_base)
-    X_test  = pipeline_ml.transform(X_test_base)
+    X_train = pipeline_ml.fit_transform(x_train_base)
+    X_test  = pipeline_ml.transform(x_test_base)
 
     try:
         feature_names = pipeline_ml.named_steps["preprocessor"].get_feature_names_out()
@@ -851,16 +853,13 @@ def build_features(
     logger.info("FIN     ft_engineering.py — build_features() | use_case: %s", use_case)
     logger.info("=" * 60)
 
-    if return_base:
-        # X_train_base / X_test_base: DataFrames en escala original (pre-pipeline_ml).
-        # Son la salida de pipeline_base: imputados, winsorizados y con columnas de
-        # leakage eliminadas, pero SIN StandardScaler ni encoding.
-        # Indispensable para el modelo heurístico, cuyos thresholds están en la
-        # escala interpretable original (ej. puntaje_datacredito < 760).
-        return X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base, \
-               X_train_base, X_test_base
-
-    return X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base
+    # Always return 8 elements; x_train_base / x_test_base are None when return_base=False.
+    # Callers that need the base DataFrames (heuristic model) pass return_base=True.
+    return (
+        X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base,
+        x_train_base if return_base else None,
+        x_test_base if return_base else None,
+    )
 
 def _validate_columns(df: pd.DataFrame, cfg: dict) -> None:
     """Valida columnas del cfg ya resuelto — aplica al use_case correcto."""
@@ -899,14 +898,14 @@ def load_features_from_cache(
     event_col = cfg["target"]["event_col"]
 
     required = [
-        artifacts_dir / "X_train.csv",
-        artifacts_dir / "X_test.csv",
-        artifacts_dir / "X_train_base.csv",
-        artifacts_dir / "X_test_base.csv",
-        artifacts_dir / "y_train.csv",
-        artifacts_dir / "y_test.csv",
-        artifacts_dir / "pipeline_ml.pkl",
-        artifacts_dir / "pipeline_base.pkl",
+        artifacts_dir / _FILE_X_TRAIN,
+        artifacts_dir / _FILE_X_TEST,
+        artifacts_dir / _FILE_X_TRAIN_BASE,
+        artifacts_dir / _FILE_X_TEST_BASE,
+        artifacts_dir / _FILE_Y_TRAIN,
+        artifacts_dir / _FILE_Y_TEST,
+        artifacts_dir / _FILE_PIPELINE_ML,
+        artifacts_dir / _FILE_PIPELINE_BASE,
     ]
     missing = [str(p) for p in required if not p.exists()]
     if missing:
@@ -915,22 +914,22 @@ def load_features_from_cache(
             f"Faltan: {missing}"
         )
 
-    X_train      = pd.read_csv(artifacts_dir / "X_train.csv")
-    X_test       = pd.read_csv(artifacts_dir / "X_test.csv")
-    X_train_base = pd.read_csv(artifacts_dir / "X_train_base.csv")
-    X_test_base  = pd.read_csv(artifacts_dir / "X_test_base.csv")
-    y_train      = pd.read_csv(artifacts_dir / "y_train.csv")[event_col].values
-    y_test       = pd.read_csv(artifacts_dir / "y_test.csv")[event_col].values
+    X_train      = pd.read_csv(artifacts_dir / _FILE_X_TRAIN)
+    X_test       = pd.read_csv(artifacts_dir / _FILE_X_TEST)
+    x_train_base = pd.read_csv(artifacts_dir / _FILE_X_TRAIN_BASE)
+    x_test_base  = pd.read_csv(artifacts_dir / _FILE_X_TEST_BASE)
+    y_train      = pd.read_csv(artifacts_dir / _FILE_Y_TRAIN)[event_col].values
+    y_test       = pd.read_csv(artifacts_dir / _FILE_Y_TEST)[event_col].values
 
     import joblib as _joblib
-    pipeline_ml   = _joblib.load(artifacts_dir / "pipeline_ml.pkl")
-    pipeline_base = _joblib.load(artifacts_dir / "pipeline_base.pkl")
+    pipeline_ml   = _joblib.load(artifacts_dir / _FILE_PIPELINE_ML)
+    pipeline_base = _joblib.load(artifacts_dir / _FILE_PIPELINE_BASE)
 
     logger.info(
         "Features cargadas desde caché: %s  |  X_train=%s  X_test=%s",
         artifacts_dir, X_train.shape, X_test.shape,
     )
-    return X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base, X_train_base, X_test_base
+    return X_train, X_test, y_train, y_test, pipeline_ml, pipeline_base, x_train_base, x_test_base
 
 
 # ──────────────────────────────────────────────────────────
@@ -976,26 +975,26 @@ if __name__ == "__main__":
         return_base=True,
     )
 
-    X_train.to_csv(artifacts_dir / "X_train.csv", index=False)
-    X_test.to_csv(artifacts_dir  / "X_test.csv",  index=False)
-    X_train_base.to_csv(artifacts_dir / "X_train_base.csv", index=False)
-    X_test_base.to_csv(artifacts_dir  / "X_test_base.csv",  index=False)
+    X_train.to_csv(artifacts_dir / _FILE_X_TRAIN,      index=False)
+    X_test.to_csv(artifacts_dir  / _FILE_X_TEST,       index=False)
+    X_train_base.to_csv(artifacts_dir / _FILE_X_TRAIN_BASE, index=False)
+    X_test_base.to_csv(artifacts_dir  / _FILE_X_TEST_BASE,  index=False)
     event_col = cfg_resolved["target"]["event_col"]
-    pd.Series(y_train, name=event_col).to_csv(artifacts_dir / "y_train.csv", index=False)
-    pd.Series(y_test,  name=event_col).to_csv(artifacts_dir / "y_test.csv",  index=False)
+    pd.Series(y_train, name=event_col).to_csv(artifacts_dir / _FILE_Y_TRAIN, index=False)
+    pd.Series(y_test,  name=event_col).to_csv(artifacts_dir / _FILE_Y_TEST,  index=False)
 
-    with open(artifacts_dir / "pipeline_ml.pkl", "wb") as fh:
+    with open(artifacts_dir / _FILE_PIPELINE_ML, "wb") as fh:
         pickle.dump(pipeline_ml, fh)
 
-    with open(artifacts_dir / "pipeline_base.pkl", "wb") as fh:
+    with open(artifacts_dir / _FILE_PIPELINE_BASE, "wb") as fh:
         pickle.dump(pipeline_base, fh)
 
     logger.info("Artefactos guardados en: %s", artifacts_dir)
-    logger.info("  X_train.csv  (%d filas, %d cols)", *X_train.shape)
-    logger.info("  X_test.csv   (%d filas, %d cols)", *X_test.shape)
-    logger.info("  y_train.csv  (%d registros)",      len(y_train))
-    logger.info("  y_test.csv   (%d registros)",      len(y_test))
-    logger.info("  pipeline_ml.pkl")
-    logger.info("  pipeline_base.pkl  [ajustado solo sobre train]")
+    logger.info("  %s  (%d filas, %d cols)", _FILE_X_TRAIN, *X_train.shape)
+    logger.info("  %s   (%d filas, %d cols)", _FILE_X_TEST, *X_test.shape)
+    logger.info("  %s  (%d registros)", _FILE_Y_TRAIN, len(y_train))
+    logger.info("  %s   (%d registros)", _FILE_Y_TEST, len(y_test))
+    logger.info("  %s", _FILE_PIPELINE_ML)
+    logger.info("  %s  [ajustado solo sobre train]", _FILE_PIPELINE_BASE)
 
 # ──────────────────────────────────────────────────────────

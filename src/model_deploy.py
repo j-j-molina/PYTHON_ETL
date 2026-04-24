@@ -66,9 +66,7 @@ def resolve_runtime_paths(cfg_global: dict, cfg: dict) -> dict:
         "drift_report_file":    reports_dir / Path(top_paths.get("drift_report_file", "drift_report.csv")).name,
     }
     for key, derived_path in derived.items():
-        if paths.get(key) == top_paths.get(key):
-            paths[key] = str(derived_path)
-        elif key not in paths:
+        if paths.get(key) == top_paths.get(key) or key not in paths:
             paths[key] = str(derived_path)
     return paths
 
@@ -116,8 +114,10 @@ def load_deployed_model(
     with open(meta_path) as f:
         meta = json.load(f)
 
+    safe_name     = str(meta["model_name"]).replace('\n', ' ').replace('\r', ' ')
+    safe_use_case = str(use_case).replace('\n', ' ').replace('\r', ' ')
     logger.info("Modelo cargado: %s  (use_case=%s, threshold=%.4f)",
-                meta["model_name"], use_case, meta["threshold"])
+                safe_name, safe_use_case, meta["threshold"])
     return model, meta, cfg, repo_root
 
 # ──────────────────────────────────────────────────────────
@@ -144,6 +144,56 @@ def _make_risk_classifier(threshold: float, risk_cfg: dict):
             return "Alto"
 
     return classify
+
+def _load_batch_input(input_data: pd.DataFrame | str | Path) -> pd.DataFrame:
+    """Load raw input as DataFrame from a CSV path or an existing DataFrame."""
+    if isinstance(input_data, (str, Path)):
+        logger.info("Cargando CSV: %s", input_data)
+        return pd.read_csv(input_data)
+    return input_data.copy()
+
+
+def _parse_predict_request(request) -> "tuple[pd.DataFrame | None, tuple | None]":
+    """
+    Parse a Flask request body as DataFrame.
+    Returns (df, None) on success or (None, error_response) on failure.
+    """
+    from flask import jsonify
+    ct = request.content_type or ""
+    if "application/json" in ct:
+        data = request.get_json(force=True)
+        df = pd.DataFrame(
+            data["records"] if isinstance(data, dict) and "records" in data else data
+        )
+        return df, None
+    if "text/csv" in ct:
+        from io import StringIO
+        return pd.read_csv(StringIO(request.data.decode("utf-8"))), None
+    return None, (jsonify({"error": "Content-Type no soportado"}), 415)
+
+
+def _handle_predict(request, model, meta: dict, cfg: dict, repo_root: Path):
+    """Handle POST /predict: parse input, run batch, return JSON response."""
+    from flask import jsonify
+    try:
+        df_input, err = _parse_predict_request(request)
+        if err is not None:
+            return err
+        if len(df_input) == 0:
+            return jsonify({"error": "Payload vacío"}), 400
+        result   = predict_batch(df_input, model=model, meta=meta, cfg=cfg, repo_root=repo_root)
+        pred_col = get_event_metadata(cfg)["pred_col"]
+        return jsonify({
+            "n_records":    len(result),
+            "n_event_pred": int(result[pred_col].sum()),
+            "predictions":  result.to_dict(orient="records"),
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 422
+    except Exception as e:
+        logger.exception("Error en /predict")
+        return jsonify({"error": str(e)}), 500
+
 
 # ──────────────────────────────────────────────────────────
 #  Pipeline de predicción batch
@@ -196,11 +246,7 @@ def predict_batch(
     classify_risk = _make_risk_classifier(threshold, risk_cfg)
 
     # ── Cargar datos ──────────────────────────────────────
-    if isinstance(input_data, (str, Path)):
-        logger.info("Cargando CSV: %s", input_data)
-        df_raw = pd.read_csv(input_data)
-    else:
-        df_raw = input_data.copy()
+    df_raw = _load_batch_input(input_data)
 
     n_records = len(df_raw)
     logger.info("Batch recibido: %d registros", n_records)
@@ -267,11 +313,11 @@ def predict_batch(
         if hasattr(pipeline_ml, "get_feature_names_out")
         else [f"f_{i}" for i in range(X.shape[1])]
     )
-    X_df = pd.DataFrame(X, columns=feature_names)
+    x_df = pd.DataFrame(X, columns=feature_names)
 
     # ── Predicción ────────────────────────────────────────
     t0     = time.time()
-    scores = model.predict_proba(X_df)[:, 1]
+    scores = model.predict_proba(x_df)[:, 1]
     preds  = (scores >= threshold).astype(int)
     elapsed = time.time() - t0
     logger.info(
@@ -293,13 +339,13 @@ def predict_batch(
 
     # ── Log (cfg.paths.logs_file) ─────────────────────────
     if log_predictions and repo_root is not None:
-        _log_predictions(result, X_df, cfg, repo_root)
+        _log_predictions(result, x_df, cfg, repo_root)
 
     return result
 
 def _log_predictions(
     result_df: pd.DataFrame,
-    X_df:      pd.DataFrame,
+    x_df:      pd.DataFrame,
     cfg:       dict,
     repo_root: Path,
 ) -> None:
@@ -308,7 +354,7 @@ def _log_predictions(
     logs_path.parent.mkdir(parents=True, exist_ok=True)
 
     log_df = pd.concat(
-        [result_df.reset_index(drop=True), X_df.reset_index(drop=True)],
+        [result_df.reset_index(drop=True), x_df.reset_index(drop=True)],
         axis=1,
     )
     if logs_path.exists():
@@ -391,38 +437,7 @@ def create_app(model=None, meta=None, cfg=None, repo_root=None):
     @app.route("/predict", methods=["POST"])
     def predict():
         """Predicción batch. Acepta application/json o text/csv."""
-        try:
-            ct = request.content_type or ""
-            if "application/json" in ct:
-                data = request.get_json(force=True)
-                df_input = pd.DataFrame(
-                    data["records"] if isinstance(data, dict) and "records" in data
-                    else data
-                )
-            elif "text/csv" in ct:
-                from io import StringIO
-                df_input = pd.read_csv(StringIO(request.data.decode("utf-8")))
-            else:
-                return jsonify({"error": "Content-Type no soportado"}), 415
-
-            if len(df_input) == 0:
-                return jsonify({"error": "Payload vacío"}), 400
-
-            result = predict_batch(
-                df_input, model=model, meta=meta, cfg=cfg, repo_root=repo_root,
-            )
-            pred_col = get_event_metadata(cfg)["pred_col"]
-            return jsonify({
-                "n_records":   len(result),
-                "n_event_pred": int(result[pred_col].sum()),
-                "predictions": result.to_dict(orient="records"),
-            })
-
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 422
-        except Exception as e:
-            logger.exception("Error en /predict")
-            return jsonify({"error": str(e)}), 500
+        return _handle_predict(request, model, meta, cfg, repo_root)
 
     return app
 
