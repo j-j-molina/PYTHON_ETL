@@ -2,6 +2,7 @@ pipeline {
     agent any
 
     options {
+        skipDefaultCheckout(true)
         timestamps()
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '10'))
@@ -62,7 +63,10 @@ pipeline {
                     set -euo pipefail
 
                     required_paths=(
+                      ".github"
+                      ".github/workflows"
                       "src"
+                      "src/Base_de_datos.csv"
                       "src/Cargar_datos.py"
                       "src/comprension_eda.ipynb"
                       "src/config.json"
@@ -74,6 +78,11 @@ pipeline {
                       "src/model_deploy.py"
                       "tests"
                       "tests/test_pipeline.py"
+                      "data"
+                      "data/raw"
+                      "data/state"
+                      "artifacts"
+                      "reports"
                       "Dockerfile"
                       "README.md"
                       "requirements.txt"
@@ -86,7 +95,6 @@ pipeline {
                     )
 
                     missing=0
-
                     for path in "${required_paths[@]}"; do
                       if [ -e "$path" ]; then
                         echo "[OK] $path"
