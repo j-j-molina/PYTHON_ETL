@@ -60,51 +60,57 @@ pipeline {
         stage('Validar estructura del proyecto') {
             steps {
                 sh '''
-                    set -euo pipefail
+                    set -eu
 
-                    required_paths=(
-                      ".github"
-                      ".github/workflows"
-                      "src"
-                      "src/Base_de_datos.csv"
-                      "src/Cargar_datos.py"
-                      "src/comprension_eda.ipynb"
-                      "src/config.json"
-                      "src/ft_engineering.py"
-                      "src/heuristic_model.py"
-                      "src/model_training.py"
-                      "src/model_evaluation.py"
-                      "src/model_monitoring.py"
-                      "src/model_deploy.py"
-                      "tests"
-                      "tests/test_pipeline.py"
-                      "data"
-                      "data/raw"
-                      "data/state"
-                      "artifacts"
-                      "reports"
-                      "Dockerfile"
-                      "README.md"
-                      "requirements.txt"
-                      "requirements_deploy.txt"
-                      "run_pipeline.sh"
-                      "run_pipeline.bat"
-                      "set_up.sh"
-                      "set_up.bat"
-                      "sonar-project.properties"
-                    )
+                    required_paths="
+        .github
+        .github/workflows
+        src
+        src/Base_de_datos.csv
+        src/Cargar_datos.py
+        src/comprension_eda.ipynb
+        src/config.json
+        src/ft_engineering.py
+        src/heuristic_model.py
+        src/model_training.py
+        src/model_evaluation.py
+        src/model_monitoring.py
+        src/model_deploy.py
+        tests
+        tests/test_pipeline.py
+        data
+        data/raw
+        data/state
+        artifacts
+        reports
+        Dockerfile
+        README.md
+        requirements.txt
+        requirements_deploy.txt
+        run_pipeline.sh
+        run_pipeline.bat
+        set_up.sh
+        set_up.bat
+        sonar-project.properties
+        "
 
                     missing=0
-                    for path in "${required_paths[@]}"; do
-                      if [ -e "$path" ]; then
+
+                    for path in $required_paths; do
+                    if [ -e "$path" ]; then
                         echo "[OK] $path"
-                      else
+                    else
                         echo "[MISSING] $path"
                         missing=1
-                      fi
+                    fi
                     done
 
-                    [ "$missing" -eq 0 ]
+                    if [ "$missing" -ne 0 ]; then
+                    echo "[ERROR] La estructura del repositorio no cumple."
+                    exit 1
+                    fi
+
+                    echo "[INFO] Estructura validada correctamente."
                 '''
             }
         }

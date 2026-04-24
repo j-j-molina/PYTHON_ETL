@@ -472,11 +472,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \\
 
 CMD ["sh", "-c", "python mlops_pipeline/src/model_deploy.py --serve --host 0.0.0.0 --port ${{PORT}} --use-case {use_case}"]
 """
-    # El Dockerfile va en la raíz del git repo (repo_root/mlops_pipeline/),
-    # NO en la carpeta padre del curso (repo_root/).
-    git_root = repo_root / "mlops_pipeline"
-    git_root.mkdir(parents=True, exist_ok=True)
-    path = git_root / "Dockerfile"
+    path = repo_root / "Dockerfile"
     with open(path, "w") as f:
         f.write(content)
     logger.info("Dockerfile generado: %s  (image=%s, port=%d)", path, image, docker_port)
@@ -525,10 +521,9 @@ run_pipeline.bat
 sonar-project.properties
 README.md
 """
-    git_root = repo_root / "mlops_pipeline"
-    with open(git_root / ".dockerignore", "w") as f:
+    with open(repo_root / ".dockerignore", "w") as f:
         f.write(content)
-    logger.info(".dockerignore generado: %s", git_root / ".dockerignore")
+    logger.info(".dockerignore generado: %s", repo_root / ".dockerignore")
 
 def generate_requirements_deploy(repo_root: Path) -> None:
     """requirements_deploy.txt mínimo para la imagen Docker de producción.
@@ -542,10 +537,9 @@ pandas>=2.0.0
 flask>=3.0.0
 python-dateutil>=2.8.0
 """
-    git_root = repo_root / "mlops_pipeline"
-    with open(git_root / "requirements_deploy.txt", "w") as f:
+    with open(repo_root / "requirements_deploy.txt", "w") as f:
         f.write(content)
-    logger.info("requirements_deploy.txt generado: %s", git_root / "requirements_deploy.txt")
+    logger.info("requirements_deploy.txt generado: %s", repo_root / "requirements_deploy.txt")
 
 def generate_deploy_summary(repo_root: Path, meta: dict, cfg: dict) -> None:
     """
