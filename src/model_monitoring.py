@@ -838,8 +838,6 @@ if __name__ == "__main__":
     logger.info("=" * 55)
     logger.info("MONITOREO COMPLETADO")
     logger.info("=" * 55)
-    logger.info("use_case        : %s", safe_use_case)
-    logger.info("Modelo          : %s", safe_name)
     logger.info("PSI output      : %.4f  (%s)",
                 psi_score_output,
                 "ALERTA" if psi_score_output > psi_threshold else "OK")
