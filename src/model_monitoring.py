@@ -46,7 +46,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 from pathlib import Path
 
 import joblib
@@ -673,11 +672,6 @@ if __name__ == "__main__":
     score_col  = event_meta["score_col"]
     pred_col   = event_meta["pred_col"]
     actual_col = event_meta["actual_col"]
-    safe_name     = re.sub(r'[\x00-\x1f\x7f]', '_', str(model_name))
-    safe_use_case = re.sub(r'[\x00-\x1f\x7f]', '_', str(args.use_case))
-    logger.info("Modelo: %s | Threshold: %.4f | use_case=%s",
-                safe_name, threshold, safe_use_case)
-
     ref_path = Path(paths["train_reference_file"])
     if not ref_path.exists():
         raise FileNotFoundError(
