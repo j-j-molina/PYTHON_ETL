@@ -56,6 +56,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import time
 import warnings
 from pathlib import Path
@@ -603,7 +604,7 @@ def plot_learning_curve_best(estimator, model_name, X_train, y_train,
     train_sizes, train_scores, test_scores, fit_times, _ = learning_curve(
         estimator, X_train, y_train,
         train_sizes=np.linspace(0.1, 1.0, 5),
-        cv=cv, scoring=scoring, n_jobs=1, return_times=True,
+        cv=cv, scoring=scoring, n_jobs=1, return_times=True, random_state=42,
     )
 
     _, axes = plt.subplots(1, 2, figsize=(13, 5))
@@ -741,12 +742,15 @@ def build_model_definitions(train_cfg: dict, y_train: np.ndarray) -> list[tuple[
             estimator = RandomForestClassifier(
                 random_state=rs,
                 ccp_alpha=params.pop("ccp_alpha", 0.0),
+                min_samples_leaf=params.pop("min_samples_leaf", 1),
+                max_features=params.pop("max_features", "sqrt"),
                 **params,
             )
         elif model_type == "gradient_boosting":
             estimator = GradientBoostingClassifier(
                 random_state=rs,
                 max_features=params.pop("max_features", None),
+                learning_rate=params.pop("learning_rate", 0.1),
                 **params,
             )
         elif model_type == "hist_gradient_boosting":
@@ -834,8 +838,9 @@ if __name__ == "__main__":
     model_definitions = build_model_definitions(train_cfg, y_train)
 
     logger.info("=" * 60)
+    safe_use_case = re.sub(r'[\x00-\x1f\x7f]', '_', str(args.use_case))
     logger.info("ENTRENAMIENTO DE MODELOS | use_case='%s' | threshold_strategy='%s'",
-                args.use_case, threshold_strategy)
+                safe_use_case, threshold_strategy)
     logger.info("=" * 60)
 
     models_data: list[dict] = []

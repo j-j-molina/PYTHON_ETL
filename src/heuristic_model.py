@@ -397,7 +397,7 @@ def plot_learning_curve(
         model_pipe, X_train, y_train,
         train_sizes=np.linspace(0.1, 1.0, 5),
         cv=cv, scoring=scoring,
-        n_jobs=1, return_times=True,
+        n_jobs=1, return_times=True, random_state=42,
     )
 
     train_mean = train_scores.mean(axis=1)
