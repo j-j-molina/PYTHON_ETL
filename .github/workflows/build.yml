@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -26,7 +26,6 @@ jobs:
       - name: Run tests with coverage
         run: |
           python -m pytest tests/ --cov=src --cov-report=xml:coverage.xml
-        continue-on-error: true
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v6
         env:
