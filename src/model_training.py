@@ -832,7 +832,6 @@ if __name__ == "__main__":
         with open(baseline_path) as f:
             bl = json.load(f)
         baseline_roc = bl["test"]["roc_auc"]
-        logger.info("Baseline heurístico — ROC-AUC test: %.4f", baseline_roc)
     # ── Catálogo de modelos desde config ───────────────────
     model_definitions = build_model_definitions(train_cfg, y_train)
 
