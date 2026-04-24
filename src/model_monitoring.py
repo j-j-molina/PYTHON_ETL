@@ -311,6 +311,7 @@ def plot_score_drift(
     model_name: str,
     psi_score: float,
     save_path: Path,
+    event_title: str = "Evento",
 ) -> None:
     """
     Distribución del score del evento: referencia vs producción.
@@ -352,7 +353,7 @@ def plot_score_drift(
     ax.set_title("Estadísticas del Score", fontweight="bold", fontsize=11)
     ax.legend()
 
-    plt.suptitle(f"DataDrift del Score de Mora — {model_name}",
+    plt.suptitle(f"DataDrift del Score de {event_title} — {model_name}",
                  fontsize=13, fontweight="bold")
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
@@ -362,6 +363,7 @@ def plot_score_drift(
 def plot_performance_over_time(
     perf_df: pd.DataFrame,
     save_path: Path,
+    event_title: str = "Evento",
 ) -> None:
     """
     Evolución de métricas de performance por ventana temporal.
@@ -388,7 +390,7 @@ def plot_performance_over_time(
            alpha=0.3, color="#E24B4A", label="% pred evento")
     ax.set_xlabel("Ventana")
     ax.set_ylabel("Score / % predicho evento")
-    ax.set_title("Evolución del Score de Mora", fontweight="bold", fontsize=11)
+    ax.set_title(f"Evolución del Score de {event_title}", fontweight="bold", fontsize=11)
     ax.tick_params(axis="x", rotation=30)
     ax.legend()
 
@@ -471,6 +473,7 @@ def build_monitoring_html(
     n_ref:         int,
     n_prod:        int,
     psi_threshold: float,
+    event_title:   str = "Evento",
 ) -> str:
 
     def status_badge(status):
@@ -570,7 +573,7 @@ def build_monitoring_html(
   {psi_rows}
 </table>
 
-<h2>3. Evolución Temporal — Score de Mora</h2>
+<h2>3. Evolución Temporal — Score de {event_title}</h2>
 <table>
   <tr>{perf_header}</tr>
   {perf_rows}
@@ -710,9 +713,10 @@ if __name__ == "__main__":
             len(production_raw), min_rows,
         )
 
+    pred_date_col     = cfg.get("deploy", {}).get("prediction_date_col", "fecha_prediccion")
     prod_feature_cols = [c for c in production_raw.columns
                          if c not in (event_col, actual_col, score_col,
-                                      pred_col, "fecha_prediccion", "window")]
+                                      pred_col, pred_date_col, "window")]
     common_cols = [c for c in ref_feature_cols if c in prod_feature_cols]
     prod_scores = model.predict_proba(production_raw[common_cols])[:, 1]
     production_raw[score_col] = prod_scores
@@ -751,11 +755,10 @@ if __name__ == "__main__":
     logger.info("PERFORMANCE POR VENTANA TEMPORAL")
     logger.info("=" * 55)
 
-    if "mes_prestamo" in production_raw.columns and "anio_prestamo" in production_raw.columns:
-        production_raw["window"] = (
-            production_raw["anio_prestamo"].astype(str) + "-"
-            + production_raw["mes_prestamo"].astype(str).str.zfill(2)
-        )
+    pred_date_col = cfg.get("deploy", {}).get("prediction_date_col", "fecha_prediccion")
+    if pred_date_col in production_raw.columns:
+        dates = pd.to_datetime(production_raw[pred_date_col], errors="coerce")
+        production_raw["window"] = dates.dt.to_period("M").astype(str)
     else:
         production_raw["window"] = pd.qcut(
             np.arange(len(production_raw)), q=4,
@@ -780,10 +783,12 @@ if __name__ == "__main__":
     plot_score_drift(
         ref_scores, prod_scores, model_name, psi_score_output,
         save_path=reports_dir / "monitor_score_drift.png",
+        event_title=event_meta["event_title"],
     )
     plot_performance_over_time(
         perf_df,
         save_path=reports_dir / "monitor_performance.png",
+        event_title=event_meta["event_title"],
     )
 
     top_drift = psi_df[psi_df["status"].isin(["Drift", "Monitorear"])]["feature"].tolist()
@@ -816,6 +821,7 @@ if __name__ == "__main__":
         n_ref=len(reference_df),
         n_prod=len(production_raw),
         psi_threshold=psi_threshold,
+        event_title=event_meta["event_title"],
     )
     html_path = reports_dir / "monitoring_report.html"
     with open(html_path, "w", encoding="utf-8") as f:

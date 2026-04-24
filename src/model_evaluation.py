@@ -129,6 +129,7 @@ def plot_score_distribution(
     threshold: float,
     model_name: str,
     save_path: Path,
+    neg_label: str = "Negativo",
 ) -> None:
     """
     Distribución de scores (probabilidades) separados por clase real.
@@ -140,7 +141,7 @@ def plot_score_distribution(
     scores_event = y_proba[y_true == 1]
 
     ax.hist(scores_ok,   bins=30, alpha=0.6, color="#378ADD",
-            label=f"Al día  (n={len(scores_ok)})",   density=True)
+            label=f"{neg_label}  (n={len(scores_ok)})",   density=True)
     ax.hist(scores_event, bins=30, alpha=0.7, color="#E24B4A",
             label=f"Evento  (n={len(scores_event)})", density=True)
     ax.axvline(threshold, color="black", linestyle="--", linewidth=1.5,
@@ -582,6 +583,7 @@ if __name__ == "__main__":
     baseline_roc = meta.get("baseline_roc", 0.0)
     cv_metrics   = meta.get("cv_metrics", {})
     event_label  = meta.get("event_col", cfg["target"]["event_col"])
+    neg_label    = cfg["target"].get("negative_class_label", "Negativo")
 
     logger.info("Modelo: %s | Threshold: %.4f | use_case=%s",
                 model_name, threshold, args.use_case)
@@ -601,7 +603,7 @@ if __name__ == "__main__":
     tn, fp, fn, tp = cm.ravel()
     report  = classification_report(
         y_test, y_pred_test,
-        target_names=["Al dia", event_label],
+        target_names=[neg_label, event_label],
         output_dict=True, zero_division=0,
     )
 
@@ -642,6 +644,7 @@ if __name__ == "__main__":
     plot_score_distribution(
         y_test, y_proba_test, threshold, model_name,
         save_path=reports_dir / "eval_score_distribution.png",
+        neg_label=neg_label,
     )
     plot_calibration(
         y_test, y_proba_test, model_name,

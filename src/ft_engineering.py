@@ -221,10 +221,13 @@ class CrearFeaturesDerivadas(BaseEstimator, TransformerMixin):
 
         # --- Ratios: name = numerator / denominator ------------------
         # "numerator_sum": [colA, colB] suma antes de dividir
+        # "denominator_add": N  → suma N al denominador antes de dividir (evita /0)
         for r in derived.get("ratio_features", []):
             if r["name"] in X.columns:
                 continue
-            denom = pd.to_numeric(X[r["denominator"]], errors="coerce").replace(0, np.nan)
+            denom = pd.to_numeric(X[r["denominator"]], errors="coerce")
+            add   = r.get("denominator_add", 0)
+            denom = (denom + add) if add else denom.replace(0, np.nan)
             numer = sum(X[c] for c in r["numerator_sum"]) if "numerator_sum" in r else X[r["numerator"]]
             X[r["name"]] = numer / denom
 
@@ -254,7 +257,7 @@ class CrearFeaturesDerivadas(BaseEstimator, TransformerMixin):
                 derived.get("antiguedad_col", "antiguedad_prestamo_dias"),
                 (ref_date - X[temporal_col]).dt.days)
 
-        # --- Bucketing de variable continua -------------------------
+        # --- Bucketing de edad (legado) ------------------------------
         age_col        = derived.get("age_col",        "edad_cliente")
         age_bucket_col = derived.get("age_bucket_col", "edad_bucket")
         age_bins       = derived.get("edad_bucket_bins")
@@ -263,6 +266,18 @@ class CrearFeaturesDerivadas(BaseEstimator, TransformerMixin):
             self._add(
                 X, age_bucket_col,
                 pd.cut(X[age_col], bins=age_bins, labels=age_labels, right=False)
+                  .astype(str).replace("nan", np.nan),
+            )
+
+        # --- Bucketing genérico: bucket_features ---------------------
+        # [{"name": "col_bucket", "col": "col_orig", "bins": [...], "labels": [...]}]
+        for b in derived.get("bucket_features", []):
+            if b["name"] in X.columns or b["col"] not in X.columns:
+                continue
+            self._add(
+                X, b["name"],
+                pd.cut(X[b["col"]], bins=b["bins"], labels=b["labels"],
+                       right=b.get("right", False))
                   .astype(str).replace("nan", np.nan),
             )
 
