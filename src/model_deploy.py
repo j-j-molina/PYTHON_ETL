@@ -31,7 +31,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 import time
 import uuid
 from datetime import datetime
@@ -115,8 +114,7 @@ def load_deployed_model(
     with open(meta_path) as f:
         meta = json.load(f)
 
-    safe_name = re.sub(r'[\x00-\x1f\x7f]', '_', str(meta["model_name"]))
-    logger.info("Modelo cargado: %s  (threshold=%.4f)", safe_name, meta["threshold"])
+    logger.info("Modelo cargado  (threshold=%.4f)", meta["threshold"])
     return model, meta, cfg, repo_root
 
 # ──────────────────────────────────────────────────────────
