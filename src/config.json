@@ -86,6 +86,7 @@
         "label_col": "Pago_atiempo",
         "event_col": "mora",
         "positive_class": 1,
+        "negative_class_label": "Al dia",
         "description": "mora=1 si Pago_atiempo==0 (no pagó a tiempo)."
       },
       "split": {
@@ -116,17 +117,17 @@
           "dia_semana_prestamo"
         ],
         "_drop_cols_reason": {
-          "salario_cliente": "EDA IV: redundante con promedio_ingresos_datacredito (IV=0.104 vs IV<0.02). Se reemplaza como denominador en ratios.",
-          "creditos_sectorFinanciero": "EDA IV: IV<0.02 (inútil). Información contenida en cant_creditosvigentes.",
-          "creditos_sectorCooperativo": "EDA IV: IV<0.02 (inútil). Información contenida en cant_creditosvigentes.",
-          "creditos_sectorReal": "EDA IV: IV<0.02 (inútil). Información contenida en cant_creditosvigentes.",
-          "antiguedad_prestamo_dias": "Pseudo-leakage temporal: calculado con fecha_ref fija (2026-02-28), PSI=18.3. Créditos de train siempre más 'antiguos' que test por construcción — el modelo aprende posición temporal, no creditworthiness.",
-          "anio_prestamo": "Proxy directo del split temporal, PSI=2.66. No aporta señal crediticia generalizable.",
-          "mes_prestamo": "Proxy directo del split temporal, PSI=12.6. No aporta señal crediticia generalizable.",
-          "dia_semana_prestamo": "Sin señal crediticia relevante; eliminado junto con las demás temporales."
+          "salario_cliente": "EDA IV=0.024 (débil, p=0.680 no significativo). Reemplazada por promedio_ingresos_datacredito (IV=0.107, p<0.001).",
+          "puntaje_datacredito_ml_note": "No está en drop_cols: el heurístico necesita la columna continua para sus reglas (< 760). El ColumnTransformer del ML pipeline la ignora automáticamente porque no aparece en numeric_cols ni ordinal_cols. El ML usa score_bucket (ordinal) que captura la no-linealidad del EDA.",
+          "creditos_sectorFinanciero": "EDA IV<0.02 (inútil). Parte componente de cant_creditosvigentes — redundante y multicolineal.",
+          "creditos_sectorCooperativo": "EDA IV=0.009 (inútil). Parte componente de cant_creditosvigentes — redundante y multicolineal.",
+          "creditos_sectorReal": "EDA IV=0.011 (inútil). Parte componente de cant_creditosvigentes — redundante y multicolineal.",
+          "antiguedad_prestamo_dias": "Pseudo-leakage temporal: PSI=18.3. El modelo aprendería posición en el tiempo, no creditworthiness.",
+          "anio_prestamo": "Proxy del split temporal, PSI=2.66.",
+          "mes_prestamo": "Proxy del split temporal, PSI=12.6.",
+          "dia_semana_prestamo": "Sin señal crediticia relevante."
         },
         "numeric_cols": [
-          "puntaje_datacredito",
           "huella_consulta",
           "plazo_meses",
           "promedio_ingresos_datacredito",
@@ -138,7 +139,8 @@
           "ratio_cuota_ingresos",
           "ratio_capital_ingresos",
           "ratio_otros_prestamos_ingresos",
-          "dti_aprox"
+          "dti_aprox",
+          "ratio_consultas_creditos"
         ],
         "categorical_cols": [
           "tipo_credito",
@@ -157,6 +159,14 @@
             "46-55",
             "56-65",
             "66+"
+          ],
+          "score_bucket": [
+            "muy_alto",
+            "alto",
+            "medio",
+            "medio_bajo",
+            "bajo",
+            "muy_bajo"
           ]
         },
         "winsorize_cols": [
@@ -228,6 +238,23 @@
               ],
               "denominator": "promedio_ingresos_datacredito",
               "_note": "Denominador cambiado de salario_cliente a promedio_ingresos_datacredito."
+            },
+            {
+              "name": "ratio_consultas_creditos",
+              "numerator": "huella_consulta",
+              "denominator": "cant_creditosvigentes",
+              "denominator_add": 1,
+              "_note": "Intensidad de búsqueda de crédito: consultas / (créditos vigentes + 1). Señal de estrés financiero cuando es alto."
+            }
+          ],
+          "bucket_features": [
+            {
+              "name": "score_bucket",
+              "col": "puntaje_datacredito",
+              "bins": [-10, 700, 750, 780, 800, 830, 1000],
+              "labels": ["muy_alto", "alto", "medio", "medio_bajo", "bajo", "muy_bajo"],
+              "right": false,
+              "_note": "Tasas de mora observadas: <700=15%, 700-750=7.7%, 750-780=4.4%, 780-800=4.6%, 800-830=3.6%, 830+=2.6%"
             }
           ]
         }
@@ -477,6 +504,8 @@
     "docker_image": "cdp_credito-scoring",
     "docker_port": 5000,
     "api_version": "v1",
+    "maintainer_email": "equipo-datos@empresa.com",
+    "prediction_date_col": "fecha_prediccion",
     "risk_thresholds": {
       "_note": "Fracciones del threshold calibrado: score < bajo → Bajo, < threshold → Medio, >= threshold → Alto",
       "bajo": 0.5,

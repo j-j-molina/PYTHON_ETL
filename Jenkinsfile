@@ -186,7 +186,7 @@ sonar-project.properties
                     . "${VENV_DIR}/bin/activate"
 
                     chmod +x run_pipeline.sh
-                    bash run_pipeline.sh
+                    bash run_pipeline.sh "${USE_CASE}"
 
                     cp -R artifacts "$WORKSPACE/${OUT_DIR}/pipeline/" 2>/dev/null || true
                     cp -R reports "$WORKSPACE/${OUT_DIR}/pipeline/" 2>/dev/null || true

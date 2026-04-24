@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SRC="src"
-USE_CASE="scoring_mora"
+USE_CASE="${1:-${USE_CASE:-scoring_mora}}"
 
 # ── Detectar Python ─────────────────────────────────
 if [[ -f "cdp_credito-venv/bin/python" ]]; then

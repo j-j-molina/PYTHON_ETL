@@ -216,6 +216,7 @@ def summarize_classification(
     split_name: str  = "Test",
     threshold:  float = 0.50,
     event_label: str = "event",
+    neg_label:  str  = "Negativo",
     verbose:    bool  = True,
 ) -> dict:
     """
@@ -226,10 +227,9 @@ def summarize_classification(
     cm      = confusion_matrix(y_true, y_pred)
     tn, fp, fn, tp = cm.ravel()
 
-    pos_label = event_label
     report = classification_report(
         y_true, y_pred,
-        target_names=["Al dia", pos_label],
+        target_names=[neg_label, event_label],
         output_dict=True,
         zero_division=0,
     )
@@ -241,10 +241,10 @@ def summarize_classification(
         "roc_auc":          round(roc_auc, 4),
         "pr_auc":           round(pr_auc, 4),
         "accuracy":         round(report["accuracy"], 4),
-        "precision_event":  round(report[pos_label]["precision"], 4),
-        "recall_event":     round(report[pos_label]["recall"], 4),
-        "f1_event":         round(report[pos_label]["f1-score"], 4),
-        "support_event":    int(report[pos_label]["support"]),
+        "precision_event":  round(report[event_label]["precision"], 4),
+        "recall_event":     round(report[event_label]["recall"], 4),
+        "f1_event":         round(report[event_label]["f1-score"], 4),
+        "support_event":    int(report[event_label]["support"]),
         "event_label":      event_label,
         "tn": int(tn), "fp": int(fp),
         "fn": int(fn), "tp": int(tp),
@@ -281,6 +281,7 @@ def build_model(
     threshold_min_precision: float = 0.05,
     fit_params:        dict = None,
     event_label:       str  = "event",
+    neg_label:         str  = "Negativo",
 ) -> tuple:
     """
     Entrena un estimador, calibra el threshold sobre train y evalúa en test.
@@ -325,11 +326,11 @@ def build_model(
 
     metrics_train = summarize_classification(
         y_train, y_pred_train, y_proba_train, name, "Train", threshold,
-        event_label=event_label,
+        event_label=event_label, neg_label=neg_label,
     )
     metrics_test = summarize_classification(
         y_test, y_pred_test, y_proba_test, name, "Test", threshold,
-        event_label=event_label,
+        event_label=event_label, neg_label=neg_label,
     )
 
     metrics_train["fit_time"] = fit_time
@@ -543,7 +544,7 @@ def plot_cv_comparison(cv_results_list, save_path, event_label="event"):
     plt.close()
     logger.info("CV comparison guardada: %s", save_path)
 
-def plot_confusion_matrices(models_data, thresholds, X_test, y_test, save_path, event_label="event"):
+def plot_confusion_matrices(models_data, thresholds, X_test, y_test, save_path, event_label="event", neg_label="Negativo"):
     """Matrices de confusión normalizadas con threshold calibrado."""
     n    = len(models_data)
     _, axes = plt.subplots(1, n, figsize=(5 * n, 4))
@@ -556,8 +557,8 @@ def plot_confusion_matrices(models_data, thresholds, X_test, y_test, save_path, 
         y_pred = (y_prob >= thr).astype(int)
         cm     = confusion_matrix(y_test, y_pred, normalize="true")
         sns.heatmap(cm, annot=True, fmt=".2%", cmap="Blues",
-                    xticklabels=["Negativo", event_label],
-                    yticklabels=["Negativo", event_label],
+                    xticklabels=[neg_label, event_label],
+                    yticklabels=[neg_label, event_label],
                     ax=ax, cbar=False)
         ax.set_title(f"{md['name']}\n(thr={thr:.3f})", fontweight="bold", fontsize=10)
         ax.set_xlabel("Predicho"); ax.set_ylabel("Real")
@@ -789,6 +790,7 @@ if __name__ == "__main__":
         {"roc_auc": 0.4, "pr_auc": 0.3, "recall": 0.2, "gap": 0.1},
     )
     event_label = cfg["target"]["event_col"]
+    neg_label   = cfg["target"].get("negative_class_label", "Negativo")
 
     # ── Features ─────────────────────────────────────────
     logger.info("Cargando features desde caché para use_case='%s'...", args.use_case)
@@ -829,6 +831,7 @@ if __name__ == "__main__":
             threshold_min_precision=threshold_min_prec,
             fit_params=fit_params,
             event_label=event_label,
+            neg_label=neg_label,
         )
         models_data.append({"name": name, "estimator": fitted})
         all_metrics.extend([m_train, m_test])
@@ -882,7 +885,8 @@ if __name__ == "__main__":
                        save_path=reports_dir / "cv_recall_comparison.png",
                        event_label=event_label)
     plot_confusion_matrices(models_data, thresholds, X_test, y_test,
-                            save_path=reports_dir / "matrices_confusion.png")
+                            save_path=reports_dir / "matrices_confusion.png",
+                            event_label=event_label, neg_label=neg_label)
     plot_feature_importance(best["estimator"], feature_names, best["name"],
                             save_path=reports_dir / "feature_importance.png")
     plot_learning_curve_best(best["estimator"], best["name"],

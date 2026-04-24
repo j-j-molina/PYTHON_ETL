@@ -237,6 +237,7 @@ def evaluate_heuristic(
     y: np.ndarray,
     split_name: str = "Test",
     event_label: str = "Event",
+    neg_label: str = "Negativo",
 ) -> dict:
     """
     Evalúa el modelo y retorna un diccionario de métricas.
@@ -252,7 +253,6 @@ def evaluate_heuristic(
     cm      = confusion_matrix(y, y_pred)
     tn, fp, fn, tp = cm.ravel()
 
-    neg_label = "Negativo"
     report = classification_report(
         y, y_pred,
         target_names=[neg_label, event_label],
@@ -472,6 +472,7 @@ if __name__ == "__main__":
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     event_label = cfg["target"]["event_col"]
+    neg_label   = cfg["target"].get("negative_class_label", "Negativo")
 
     # 2. Features
     # return_base=True expone X_train_base / X_test_base: DataFrames en escala
@@ -490,8 +491,8 @@ if __name__ == "__main__":
     model.fit(X_train_base, y_train)
 
     # 4. Evaluación en train/test (escala original — reglas interpretables)
-    metrics_train = evaluate_heuristic(model, X_train_base, y_train, "Train", event_label)
-    metrics_test  = evaluate_heuristic(model, X_test_base,  y_test,  "Test",  event_label)
+    metrics_train = evaluate_heuristic(model, X_train_base, y_train, "Train", event_label, neg_label)
+    metrics_test  = evaluate_heuristic(model, X_test_base,  y_test,  "Test",  event_label, neg_label)
 
     # 5. Cross-validation KFold(n)
     train_cfg = cfg.get("training", {})

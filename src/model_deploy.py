@@ -443,7 +443,7 @@ FROM python:3.11-slim
 
 LABEL project="{cfg["project_code"]}"
 LABEL description="Scoring del evento — {image}"
-LABEL maintainer="equipo-datos@empresa.com"
+LABEL maintainer="{d.get("maintainer_email", cfg["project_code"] + "@empresa.com")}"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \\
     PYTHONUNBUFFERED=1 \\
@@ -498,7 +498,7 @@ venv/
 .ipynb_checkpoints/
 
 # Datos crudos y de estado
-src/Base_de_datos.csv
+{cfg["paths"].get("base_data_csv", "")}
 data/
 {cfg["paths"]["train_reference_file"]}
 

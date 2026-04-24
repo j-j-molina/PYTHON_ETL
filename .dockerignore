@@ -17,7 +17,7 @@ venv/
 .ipynb_checkpoints/
 
 # Datos crudos y de estado
-src/Base_de_datos.csv
+Base_de_datos.csv
 data/
 artifacts/scoring_mora/train_reference.csv
 
