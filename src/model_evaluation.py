@@ -540,7 +540,7 @@ if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-    from ft_engineering import build_features, load_config, resolve_cfg
+    from ft_engineering import load_features_from_cache, load_config, resolve_cfg
 
     parser = argparse.ArgumentParser(
         description="model_evaluation — evaluación del modelo desplegado"
@@ -586,11 +586,10 @@ if __name__ == "__main__":
     logger.info("Modelo: %s | Threshold: %.4f | use_case=%s",
                 model_name, threshold, args.use_case)
 
-    logger.info("Cargando features...")
-    X_train, X_test, y_train, y_test, _, _ = build_features(
+    logger.info("Cargando features desde caché...")
+    X_train, X_test, y_train, y_test, _, _, _, _ = load_features_from_cache(
         use_case=args.use_case,
         config_path=Path(args.config) if args.config else None,
-        return_dataframe=True,
     )
 
     y_proba_test  = model.predict_proba(X_test)[:, 1]

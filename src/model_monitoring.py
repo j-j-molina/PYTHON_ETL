@@ -636,7 +636,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from ft_engineering import build_features, load_config, resolve_cfg
+    from ft_engineering import load_features_from_cache, load_config, resolve_cfg
 
     cfg_global, _ = load_config(Path(args.config) if args.config else None)
     cfg = resolve_cfg(cfg_global, args.use_case)
@@ -694,10 +694,9 @@ if __name__ == "__main__":
             "prediction_logs.csv no encontrado. "
             "Usando X_test como proxy de produccion."
         )
-        X_train, X_test, y_train, y_test, _, _ = build_features(
+        X_train, X_test, y_train, y_test, _, _, _, _ = load_features_from_cache(
             use_case=args.use_case,
             config_path=Path(args.config) if args.config else None,
-            return_dataframe=True,
         )
         production_raw = X_test.copy()
         production_raw[actual_col] = np.asarray(y_test)
