@@ -619,9 +619,6 @@ if __name__ == "__main__":
         "tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp),
     }
 
-    logger.info("=" * 55)
-    logger.info("EVALUACION DEL MODELO DESPLEGADO — %s", safe_name)
-    logger.info("=" * 55)
     cv_roc_mean = cv_metrics.get("roc_auc", {}).get("mean", 0)
     cv_rec_mean = cv_metrics.get("recall",  {}).get("mean", 0)
     logger.info("ROC-AUC test : %.4f  (CV: %.4f)", roc_auc, cv_roc_mean)
