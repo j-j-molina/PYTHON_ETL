@@ -585,8 +585,10 @@ if __name__ == "__main__":
     event_label  = meta.get("event_col", cfg["target"]["event_col"])
     neg_label    = cfg["target"].get("negative_class_label", "Negativo")
 
+    safe_name     = str(model_name).replace('\n', ' ').replace('\r', ' ')
+    safe_use_case = str(args.use_case).replace('\n', ' ').replace('\r', ' ')
     logger.info("Modelo: %s | Threshold: %.4f | use_case=%s",
-                model_name, threshold, args.use_case)
+                safe_name, threshold, safe_use_case)
 
     logger.info("Cargando features desde caché...")
     X_train, X_test, y_train, y_test, _, _, _, _ = load_features_from_cache(
@@ -623,7 +625,7 @@ if __name__ == "__main__":
     }
 
     logger.info("=" * 55)
-    logger.info("EVALUACION DEL MODELO DESPLEGADO — %s", model_name)
+    logger.info("EVALUACION DEL MODELO DESPLEGADO — %s", safe_name)
     logger.info("=" * 55)
     cv_roc_mean = cv_metrics.get("roc_auc", {}).get("mean", 0)
     cv_rec_mean = cv_metrics.get("recall",  {}).get("mean", 0)
