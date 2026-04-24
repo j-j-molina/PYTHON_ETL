@@ -85,10 +85,10 @@ logger = logging.getLogger(__name__)
 #  Utilidades: config y repo
 
 def _find_repo_root(start: Path) -> Path:
-    """Sube hasta encontrar la raíz del repositorio (contiene mlops_pipeline/)."""
+    """Sube hasta encontrar la raíz del repositorio git (contiene .git/)."""
     p = start.resolve()
     for _ in range(8):
-        if (p / "mlops_pipeline").exists():
+        if (p / ".git").exists():
             return p
         p = p.parent
     return start.resolve()

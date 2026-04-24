@@ -260,17 +260,17 @@
   },
   "paths": {
     "base_data_csv": "Base_de_datos.csv",
-    "artifacts_dir": "mlops_pipeline/artifacts",
-    "reports_dir": "mlops_pipeline/reports",
-    "logs_file": "mlops_pipeline/artifacts/prediction_logs.csv",
-    "model_file": "mlops_pipeline/artifacts/best_model.joblib",
-    "model_meta_file": "mlops_pipeline/artifacts/best_model_meta.json",
-    "train_reference_file": "mlops_pipeline/artifacts/train_reference.csv",
-    "metrics_file": "mlops_pipeline/reports/metrics_latest.json",
-    "drift_report_file": "mlops_pipeline/reports/drift_report.csv",
-    "pipeline_ml_file": "mlops_pipeline/artifacts/pipeline_ml.pkl",
-    "deploy_summary_file": "mlops_pipeline/artifacts/deploy_summary.json",
-    "pipeline_base_file": "mlops_pipeline/artifacts/pipeline_base.pkl"
+    "artifacts_dir": "artifacts",
+    "reports_dir": "reports",
+    "logs_file": "artifacts/prediction_logs.csv",
+    "model_file": "artifacts/best_model.joblib",
+    "model_meta_file": "artifacts/best_model_meta.json",
+    "train_reference_file": "artifacts/train_reference.csv",
+    "metrics_file": "reports/metrics_latest.json",
+    "drift_report_file": "reports/drift_report.csv",
+    "pipeline_ml_file": "artifacts/pipeline_ml.pkl",
+    "deploy_summary_file": "artifacts/deploy_summary.json",
+    "pipeline_base_file": "artifacts/pipeline_base.pkl"
   },
   "target": {
     "label_col": "Pago_atiempo",
