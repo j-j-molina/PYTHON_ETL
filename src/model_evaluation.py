@@ -585,8 +585,6 @@ if __name__ == "__main__":
     event_label  = meta.get("event_col", cfg["target"]["event_col"])
     neg_label    = cfg["target"].get("negative_class_label", "Negativo")
 
-    logger.info("Modelo cargado | Threshold: %.4f", threshold)
-
     logger.info("Cargando features desde caché...")
     X_train, X_test, y_train, y_test, _, _, _, _ = load_features_from_cache(
         use_case=args.use_case,

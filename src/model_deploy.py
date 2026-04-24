@@ -114,7 +114,6 @@ def load_deployed_model(
     with open(meta_path) as f:
         meta = json.load(f)
 
-    logger.info("Modelo cargado  (threshold=%.4f)", meta["threshold"])
     return model, meta, cfg, repo_root
 
 # ──────────────────────────────────────────────────────────

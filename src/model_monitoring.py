@@ -672,8 +672,6 @@ if __name__ == "__main__":
     score_col  = event_meta["score_col"]
     pred_col   = event_meta["pred_col"]
     actual_col = event_meta["actual_col"]
-    logger.info("Modelo cargado | Threshold: %.4f", threshold)
-
     ref_path = Path(paths["train_reference_file"])
     if not ref_path.exists():
         raise FileNotFoundError(
