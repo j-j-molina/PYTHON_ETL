@@ -1,242 +1,217 @@
 pipeline {
     agent any
 
-    // ──────────────────────────────────────────────
-    // Trigger: se ejecuta automáticamente en cada
-    // push / merge a la rama Master
-    // ──────────────────────────────────────────────
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 90, unit: 'MINUTES')
+    }
+
     triggers {
         pollSCM('H/5 * * * *')
     }
 
-    environment {
-        PYTHON    = 'python3'
-        VENV_DIR  = 'venv'
-        EMAIL_TO  = 'jjmolinaz1510@gmail.com'
+    parameters {
+        string(name: 'USE_CASE', defaultValue: 'scoring_mora', description: 'Caso de uso configurado en src/config.json')
+        string(name: 'EMAIL_TO', defaultValue: 'juanj.molina@upb.edu.co', description: 'Correo para notificación final')
     }
 
-    options {
-        timestamps()
-        timeout(time: 60, unit: 'MINUTES')
-        buildDiscarder(logRotator(numToKeepStr: '10'))
+    environment {
+        VENV_DIR = '.venv_jenkins'
+        OUT_DIR  = 'jenkins_outputs'
     }
 
     stages {
-
-        // ── 1. CLONAR REPOSITORIO ─────────────────
-        stage('Checkout') {
+        stage('Checkout SCM') {
             steps {
-                echo '📥 Clonando repositorio desde GitHub...'
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/Master']],
-                    userRemoteConfigs: [[
-                        url: 'https://github.com/j-j-molina/mlops_pipeline.git'
-                    ]]
-                ])
+                checkout scm
+                sh '''
+                    set -e
+                    mkdir -p "$WORKSPACE/${OUT_DIR}"
+                    echo "[INFO] Repo descargado por Jenkins:"
+                    pwd
+                    ls -la
+                '''
             }
         }
 
-        // ── 2. VALIDAR ESTRUCTURA DE CARPETAS ─────
-        // PRUEBA REQUERIDA: verifica que el repo tenga
-        // todos los archivos y carpetas necesarios
-        stage('Validar estructura de carpetas') {
+        stage('Verificar entorno Jenkins') {
             steps {
-                dir('..') {   // ← sube un nivel como indica la guía del curso
-                    echo '🗂️  Verificando estructura del proyecto...'
-                    script {
-                        def requiredPaths = [
-                            'src',
-                            'src/Cargar_datos.py',
-                            'src/ft_engineering.py',
-                            'src/heuristic_model.py',
-                            'src/model_training.py',
-                            'src/model_evaluation.py',
-                            'src/model_deploy.py',
-                            'src/model_monitoring.py',
-                            'src/config.json',
-                            'data/raw',
-                            'data/state',
-                            'reports',
-                            'tests',
-                            'requirements.txt',
-                            'Dockerfile'
-                        ]
+                sh '''
+                    set -euo pipefail
 
-                        def missing = []
-                        requiredPaths.each { path ->
-                            if (!fileExists(path)) {
-                                missing << path
-                            }
-                        }
+                    command -v docker >/dev/null 2>&1 || { echo "[ERROR] docker no disponible"; exit 1; }
+                    command -v git >/dev/null 2>&1 || { echo "[ERROR] git no disponible"; exit 1; }
+                    command -v python3 >/dev/null 2>&1 || { echo "[ERROR] python3 no disponible"; exit 1; }
 
-                        if (missing) {
-                            error("❌ Faltan archivos/carpetas:\n  - ${missing.join('\n  - ')}")
-                        } else {
-                            echo '✅ Estructura de carpetas correcta.'
-                        }
-                    }
-                }
+                    [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] || { echo "[ERROR] GOOGLE_APPLICATION_CREDENTIALS no definido"; exit 1; }
+                    [ -f "${GOOGLE_APPLICATION_CREDENTIALS}" ] || { echo "[ERROR] No existe el archivo ADC en ${GOOGLE_APPLICATION_CREDENTIALS}"; exit 1; }
+
+                    docker --version
+                    git --version
+                    python3 --version
+                    docker ps >/dev/null
+                '''
             }
         }
 
-        // ── 3. INSTALAR DEPENDENCIAS ──────────────
+        stage('Validar estructura del proyecto') {
+            steps {
+                sh '''
+                    set -euo pipefail
+
+                    required_paths=(
+                      "src"
+                      "src/Cargar_datos.py"
+                      "src/comprension_eda.ipynb"
+                      "src/config.json"
+                      "src/ft_engineering.py"
+                      "src/heuristic_model.py"
+                      "src/model_training.py"
+                      "src/model_evaluation.py"
+                      "src/model_monitoring.py"
+                      "src/model_deploy.py"
+                      "tests"
+                      "tests/test_pipeline.py"
+                      "Dockerfile"
+                      "README.md"
+                      "requirements.txt"
+                      "requirements_deploy.txt"
+                      "run_pipeline.sh"
+                      "run_pipeline.bat"
+                      "set_up.sh"
+                      "set_up.bat"
+                      "sonar-project.properties"
+                    )
+
+                    missing=0
+
+                    for path in "${required_paths[@]}"; do
+                      if [ -e "$path" ]; then
+                        echo "[OK] $path"
+                      else
+                        echo "[MISSING] $path"
+                        missing=1
+                      fi
+                    done
+
+                    [ "$missing" -eq 0 ]
+                '''
+            }
+        }
+
         stage('Instalar dependencias') {
             steps {
-                dir('..') {
-                    echo '🐍 Instalando dependencias...'
-                    sh """
-                        ${PYTHON} -m venv ${VENV_DIR}
-                        . ${VENV_DIR}/bin/activate
-                        pip install --upgrade pip
-                        pip install -r requirements.txt
-                    """
-                }
+                sh '''
+                    set -euo pipefail
+
+                    rm -rf "${VENV_DIR}"
+                    python3 -m venv "${VENV_DIR}"
+                    . "${VENV_DIR}/bin/activate"
+
+                    python -m pip install --upgrade pip
+                    pip install -r requirements.txt
+                '''
             }
         }
 
-        // ── 4. TESTS UNITARIOS ────────────────────
-        stage('Tests') {
+        stage('Ingesta desde GCP') {
             steps {
-                dir('..') {
-                    echo '🧪 Ejecutando pruebas unitarias...'
-                    sh """
-                        . ${VENV_DIR}/bin/activate
-                        pytest tests/ --tb=short --junitxml=reports/test-results.xml -v
-                    """
-                }
+                sh '''
+                    set -euo pipefail
+
+                    . "${VENV_DIR}/bin/activate"
+                    python src/Cargar_datos.py --use-case "${USE_CASE}"
+                '''
+            }
+        }
+
+        stage('Pruebas automatizadas') {
+            steps {
+                sh '''
+                    set -euo pipefail
+
+                    mkdir -p "$WORKSPACE/${OUT_DIR}/tests"
+                    . "${VENV_DIR}/bin/activate"
+
+                    pytest tests/ -v --tb=short \
+                      --junitxml="$WORKSPACE/${OUT_DIR}/tests/test-results.xml" \
+                      --cov=src \
+                      --cov-report=xml:"$WORKSPACE/${OUT_DIR}/tests/coverage.xml"
+                '''
             }
             post {
                 always {
-                    junit 'reports/test-results.xml'
+                    junit allowEmptyResults: true, testResults: 'jenkins_outputs/tests/test-results.xml'
                 }
             }
         }
 
-        // ── 5. CARGAR DATOS ───────────────────────
-        stage('Cargar datos') {
+        stage('Ejecutar pipeline MLOps') {
             steps {
-                dir('..') {
-                    echo '📊 Cargando datos...'
-                    sh """
-                        . ${VENV_DIR}/bin/activate
-                        ${PYTHON} src/Cargar_datos.py
-                    """
-                }
-            }
-        }
+                sh '''
+                    set -euo pipefail
 
-        // ── 6. FEATURE ENGINEERING ────────────────
-        stage('Feature Engineering') {
-            steps {
-                dir('..') {
-                    echo '⚙️  Ejecutando feature engineering...'
-                    sh """
-                        . ${VENV_DIR}/bin/activate
-                        ${PYTHON} src/ft_engineering.py
-                    """
-                }
-            }
-        }
+                    mkdir -p "$WORKSPACE/${OUT_DIR}/pipeline"
+                    . "${VENV_DIR}/bin/activate"
 
-        // ── 7. ENTRENAMIENTO ──────────────────────
-        stage('Entrenamiento del modelo') {
-            steps {
-                dir('..') {
-                    echo '🤖 Entrenando modelo...'
-                    sh """
-                        . ${VENV_DIR}/bin/activate
-                        ${PYTHON} src/model_training.py
-                    """
-                }
-            }
-        }
+                    chmod +x run_pipeline.sh
+                    bash run_pipeline.sh
 
-        // ── 8. EVALUACIÓN ─────────────────────────
-        stage('Evaluación del modelo') {
-            steps {
-                dir('..') {
-                    echo '📈 Evaluando modelo...'
-                    sh """
-                        . ${VENV_DIR}/bin/activate
-                        ${PYTHON} src/model_evaluation.py
-                    """
-                }
-            }
-        }
-
-        // ── 9. DEPLOY ─────────────────────────────
-        stage('Deploy') {
-            steps {
-                dir('..') {
-                    echo '🚀 Desplegando modelo...'
-                    sh """
-                        . ${VENV_DIR}/bin/activate
-                        ${PYTHON} src/model_deploy.py
-                    """
-                }
-            }
-        }
-
-        // ── 10. MONITOREO ─────────────────────────
-        stage('Monitoreo') {
-            steps {
-                dir('..') {
-                    echo '📡 Ejecutando monitoreo...'
-                    sh """
-                        . ${VENV_DIR}/bin/activate
-                        ${PYTHON} src/model_monitoring.py
-                    """
-                }
+                    cp -R artifacts "$WORKSPACE/${OUT_DIR}/pipeline/" || true
+                    cp -R reports "$WORKSPACE/${OUT_DIR}/pipeline/" || true
+                    cp -f Dockerfile "$WORKSPACE/${OUT_DIR}/pipeline/" 2>/dev/null || true
+                    cp -f requirements_deploy.txt "$WORKSPACE/${OUT_DIR}/pipeline/" 2>/dev/null || true
+                    cp -f .dockerignore "$WORKSPACE/${OUT_DIR}/pipeline/" 2>/dev/null || true
+                '''
             }
         }
     }
 
-    // ──────────────────────────────────────────────
-    // NOTIFICACIÓN AL TERMINAR (requerimiento fase 2)
-    // ──────────────────────────────────────────────
     post {
         success {
-            echo '✅ Pipeline finalizado exitosamente.'
-            mail(
-                to: "${EMAIL_TO}",
-                subject: "✅ [Jenkins] mlops_pipeline #${BUILD_NUMBER} — ÉXITO",
-                body: """
-Build exitoso.
-Proyecto  : ${JOB_NAME}
-Build #   : ${BUILD_NUMBER}
-Duración  : ${currentBuild.durationString}
-Ver resultado: ${BUILD_URL}
-                """
-            )
+            script {
+                try {
+                    mail(
+                        to: params.EMAIL_TO,
+                        subject: "✅ Jenkins SUCCESS | ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                        body: """El pipeline finalizó exitosamente.
+
+Job: ${env.JOB_NAME}
+Build: #${env.BUILD_NUMBER}
+Use case: ${params.USE_CASE}
+URL: ${env.BUILD_URL}
+"""
+                    )
+                } catch (err) {
+                    echo "[WARN] No se pudo enviar el correo de éxito: ${err}"
+                }
+            }
         }
 
         failure {
-            echo '❌ Pipeline fallido.'
-            mail(
-                to: "${EMAIL_TO}",
-                subject: "❌ [Jenkins] mlops_pipeline #${BUILD_NUMBER} — FALLO",
-                body: """
-Build fallido.
-Proyecto  : ${JOB_NAME}
-Build #   : ${BUILD_NUMBER}
-Ver logs  : ${BUILD_URL}console
-                """
-            )
-        }
+            script {
+                try {
+                    mail(
+                        to: params.EMAIL_TO,
+                        subject: "❌ Jenkins FAILURE | ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                        body: """El pipeline falló.
 
-        unstable {
-            echo '⚠️ Pipeline inestable — revisa los tests.'
-            mail(
-                to: "${EMAIL_TO}",
-                subject: "⚠️ [Jenkins] mlops_pipeline #${BUILD_NUMBER} — INESTABLE",
-                body: "Revisa los resultados: ${BUILD_URL}testReport"
-            )
+Job: ${env.JOB_NAME}
+Build: #${env.BUILD_NUMBER}
+Use case: ${params.USE_CASE}
+URL: ${env.BUILD_URL}
+"""
+                    )
+                } catch (err) {
+                    echo "[WARN] No se pudo enviar el correo de fallo: ${err}"
+                }
+            }
         }
 
         always {
-            echo '🧹 Limpiando workspace...'
-            cleanWs()
+            archiveArtifacts allowEmptyArchive: true, artifacts: 'jenkins_outputs/**/*'
         }
     }
 }
