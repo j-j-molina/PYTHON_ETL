@@ -38,15 +38,41 @@ from ft_engineering import (
     ImputacionSegmentada,
     LimpiarCategoricas,
     Winsorizar,
+    load_config,
+    resolve_cfg,
+    _deep_merge,
+    build_pipeline_stateless,
+    build_pipeline_base,
+    build_pipeline_ml,
+    temporal_split,
+    _validate_columns,
 )
 LimpiarTendenciaIngresos = LimpiarCategoricas  # alias para tests heredados
-from heuristic_model import HeuristicMoraModel, evaluate_heuristic, HeuristicRuleModel
-from model_training import build_model, find_optimal_threshold, summarize_classification
-from model_evaluation import plot_score_distribution
+from heuristic_model import (
+    HeuristicMoraModel, evaluate_heuristic, HeuristicRuleModel,
+    plot_learning_curve,
+)
+from model_training import (
+    build_model, find_optimal_threshold, summarize_classification,
+    build_model_definitions,
+)
+from model_evaluation import (
+    plot_score_distribution,
+    get_event_metadata as eval_get_event_metadata,
+    decile_analysis,
+)
 from model_monitoring import (
     build_monitoring_html,
     plot_performance_over_time,
     plot_score_drift,
+    get_event_metadata as mon_get_event_metadata,
+    compute_psi_feature,
+)
+from model_deploy import (
+    get_event_metadata as deploy_get_event_metadata,
+    resolve_runtime_paths as deploy_resolve_runtime_paths,
+    _make_risk_classifier,
+    _load_batch_input,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -772,3 +798,355 @@ class TestMonitoringEventTitle:
             psi_threshold=0.2,
         )
         assert isinstance(html, str)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  ft_engineering: load_config, resolve_cfg, _deep_merge
+
+class TestFtEngineeringConfig:
+    def test_load_config_returns_dict(self):
+        cfg, _ = load_config()
+        assert isinstance(cfg, dict)
+        assert "use_cases" in cfg
+
+    def test_resolve_cfg_scoring_mora(self):
+        cfg_global, _ = load_config()
+        cfg = resolve_cfg(cfg_global, "scoring_mora")
+        assert cfg["_use_case"] == "scoring_mora"
+        assert "feature_engineering" in cfg
+
+    def test_resolve_cfg_unknown_raises(self):
+        cfg_global, _ = load_config()
+        with pytest.raises(KeyError):
+            resolve_cfg(cfg_global, "use_case_inexistente")
+
+    def test_deep_merge_overrides_nested(self):
+        base = {"a": 1, "b": {"c": 2, "d": 3}}
+        override = {"b": {"c": 99}}
+        result = _deep_merge(base, override)
+        assert result["b"]["c"] == 99
+        assert result["b"]["d"] == 3
+        assert result["a"] == 1
+
+    def test_deep_merge_does_not_mutate_base(self):
+        base = {"a": {"b": 1}}
+        _deep_merge(base, {"a": {"b": 2}})
+        assert base["a"]["b"] == 1
+
+    def test_validate_columns_ok(self):
+        cfg_global, _ = load_config()
+        cfg = resolve_cfg(cfg_global, "scoring_mora")
+        fe = cfg["feature_engineering"]
+        cols = fe["numeric_cols"] + fe["categorical_cols"] + list(fe["ordinal_cols"].keys())
+        df = pd.DataFrame({c: [0] for c in cols})
+        _validate_columns(df, cfg)  # should not raise
+
+    def test_validate_columns_missing_raises(self):
+        cfg_global, _ = load_config()
+        cfg = resolve_cfg(cfg_global, "scoring_mora")
+        with pytest.raises(ValueError):
+            _validate_columns(pd.DataFrame({"col_x": [1]}), cfg)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  ft_engineering: pipeline builders
+
+def _make_scoring_mora_df(n: int = 30, seed: int = 7) -> pd.DataFrame:
+    """DataFrame completo para el pipeline scoring_mora."""
+    rng = np.random.default_rng(seed)
+    fechas = pd.date_range("2024-01-01", periods=n, freq="10D")
+    return pd.DataFrame({
+        "tipo_credito":              rng.choice(["CONSUMO", "COMERCIAL", "HIPOTECARIO"], n),
+        "fecha_prestamo":            fechas,
+        "capital_prestado":          rng.uniform(5e5, 5e6, n),
+        "plazo_meses":               rng.integers(6, 60, n),
+        "edad_cliente":              rng.integers(22, 65, n),
+        "tipo_laboral":              rng.choice(["Empleado", "Independiente", "Pensionado"], n),
+        "salario_cliente":           rng.uniform(1.2e6, 10e6, n),
+        "total_otros_prestamos":     rng.uniform(0, 5e6, n),
+        "cuota_pactada":             rng.uniform(1e5, 8e5, n),
+        "puntaje":                   rng.uniform(400, 950, n),
+        "puntaje_datacredito":       rng.uniform(400, 950, n),
+        "cant_creditosvigentes":     rng.integers(0, 10, n),
+        "huella_consulta":           rng.integers(0, 15, n),
+        "saldo_mora":                rng.uniform(0, 1e6, n),
+        "saldo_total":               rng.uniform(0, 1e7, n),
+        "saldo_principal":           rng.uniform(0, 1e7, n),
+        "saldo_mora_codeudor":       rng.uniform(0, 5e5, n),
+        "creditos_sectorFinanciero": rng.integers(0, 5, n),
+        "creditos_sectorCooperativo":rng.integers(0, 3, n),
+        "creditos_sectorReal":       rng.integers(0, 2, n),
+        "promedio_ingresos_datacredito": np.where(rng.random(n) < 0.3, np.nan, rng.uniform(1e6, 8e6, n)),
+        "tendencia_ingresos":        rng.choice(["Creciente", "Estable", "Decreciente", None], n),
+        "Pago_atiempo":              rng.choice([0, 1], n, p=[0.05, 0.95]),
+    })
+
+
+class TestBuildPipelines:
+    def setup_method(self):
+        cfg_global, _ = load_config()
+        self.cfg = resolve_cfg(cfg_global, "scoring_mora")
+
+    def test_build_pipeline_stateless_steps(self):
+        pipe = build_pipeline_stateless(self.cfg)
+        assert len(pipe.steps) == 2
+
+    def test_build_pipeline_stateless_adds_derived_features(self):
+        df = _make_scoring_mora_df()
+        pipe = build_pipeline_stateless(self.cfg)
+        out = pipe.fit_transform(df)
+        assert "ratio_cuota_ingresos" in out.columns
+        assert "edad_bucket" in out.columns
+
+    def test_build_pipeline_base_steps(self):
+        pipe = build_pipeline_base(self.cfg)
+        assert len(pipe.steps) == 3
+
+    def test_build_pipeline_base_removes_leakage(self):
+        df = _make_scoring_mora_df()
+        stateless = build_pipeline_stateless(self.cfg)
+        df_pre = stateless.fit_transform(df)
+        base = build_pipeline_base(self.cfg)
+        out = base.fit_transform(df_pre)
+        for col in ["puntaje", "Pago_atiempo", "saldo_mora"]:
+            assert col not in out.columns
+
+    def test_build_pipeline_ml_output_shape(self):
+        df = _make_scoring_mora_df(40)
+        stateless = build_pipeline_stateless(self.cfg)
+        df_pre = stateless.fit_transform(df)
+        df_pre["mora"] = (df_pre["Pago_atiempo"] == 0).astype(int)
+        base = build_pipeline_base(self.cfg)
+        df_base = base.fit_transform(df_pre.drop(columns=["mora"], errors="ignore"))
+        ml = build_pipeline_ml(self.cfg)
+        out = ml.fit_transform(df_base)
+        assert out.shape[0] == 40
+        assert out.shape[1] > 0
+
+
+class TestTemporalSplitRandom:
+    def test_random_split_sizes(self):
+        df = _make_df(100)
+        df["mora"] = np.random.default_rng(0).choice([0, 1], 100, p=[0.95, 0.05])
+        cfg = {"split": {"type": "random", "test_size": 0.2, "date_col": "fecha_prestamo"},
+               "target": {"event_col": "mora"}}
+        train_df, test_df = temporal_split(df, cfg, "fecha_prestamo")
+        assert len(train_df) + len(test_df) == 100
+
+    def test_unknown_split_type_raises(self):
+        df = _make_df(10)
+        df["mora"] = 0
+        cfg = {"split": {"type": "invalid", "date_col": "fecha_prestamo"},
+               "target": {"event_col": "mora"}}
+        with pytest.raises(ValueError):
+            temporal_split(df, cfg, "fecha_prestamo")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  model_training: build_model_definitions (new explicit hyperparams)
+
+class TestBuildModelDefinitions:
+    def _y(self):
+        return np.array([0] * 95 + [1] * 5)
+
+    def _spec(self, model_type, params):
+        return {"name": model_type, "type": model_type, "params": params}
+
+    def test_random_forest_explicit_min_samples_leaf(self):
+        cfg = {"models": [self._spec("random_forest", {
+            "n_estimators": 10, "max_depth": 3,
+            "min_samples_leaf": 7, "max_features": "sqrt",
+            "class_weight": "balanced_subsample",
+        })]}
+        defs = build_model_definitions(cfg, self._y())
+        _, est, _ = defs[0]
+        assert est.min_samples_leaf == 7
+        assert est.max_features == "sqrt"
+
+    def test_gradient_boosting_explicit_learning_rate(self):
+        cfg = {"models": [self._spec("gradient_boosting", {
+            "n_estimators": 10, "learning_rate": 0.05,
+            "max_depth": 2, "min_samples_leaf": 5, "subsample": 0.8,
+        })]}
+        defs = build_model_definitions(cfg, self._y())
+        _, est, _ = defs[0]
+        assert est.learning_rate == pytest.approx(0.05)
+
+    def test_hist_gradient_boosting_explicit_learning_rate(self):
+        cfg = {"models": [self._spec("hist_gradient_boosting", {
+            "max_iter": 20, "learning_rate": 0.07, "max_depth": 3,
+            "class_weight": "balanced",
+        })]}
+        defs = build_model_definitions(cfg, self._y())
+        _, est, _ = defs[0]
+        assert est.learning_rate == pytest.approx(0.07)
+
+    def test_logistic_regression_built(self):
+        cfg = {"models": [self._spec("logistic_regression", {
+            "C": 1.0, "max_iter": 100, "class_weight": "balanced",
+        })]}
+        defs = build_model_definitions(cfg, self._y())
+        assert len(defs) == 1
+
+    def test_unknown_model_type_raises(self):
+        cfg = {"models": [self._spec("xgboost", {})]}
+        with pytest.raises(ValueError):
+            build_model_definitions(cfg, self._y())
+
+    def test_returns_list_of_tuples(self):
+        cfg = {"models": [
+            self._spec("logistic_regression", {"max_iter": 50}),
+            self._spec("random_forest", {"n_estimators": 5, "min_samples_leaf": 1, "max_features": "sqrt"}),
+        ]}
+        defs = build_model_definitions(cfg, self._y())
+        assert isinstance(defs, list)
+        assert len(defs) == 2
+        assert all(isinstance(d, tuple) and len(d) == 3 for d in defs)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  heuristic_model: plot_learning_curve (new random_state=42 line)
+
+class TestPlotLearningCurveHeuristic:
+    def test_plot_learning_curve_creates_file(self, tmp_path):
+        rules = [{"col": "puntaje_datacredito", "op": "<", "threshold": 760}]
+        model = HeuristicRuleModel(rules=rules, min_signals=1)
+        df = pd.DataFrame({
+            "puntaje_datacredito": np.random.default_rng(0).uniform(400, 950, 80),
+        })
+        y = np.random.default_rng(0).choice([0, 1], 80, p=[0.95, 0.05])
+        save = tmp_path / "lc.png"
+        plot_learning_curve(model, df, y, save, n_shuffles=3)
+        plt.close("all")
+        assert save.exists()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  model_evaluation: get_event_metadata, decile_analysis
+
+class TestModelEvaluationHelpers:
+    def _cfg(self):
+        return {"target": {"event_col": "mora"}}
+
+    def test_get_event_metadata_keys(self):
+        meta = eval_get_event_metadata(self._cfg())
+        assert meta["event_col"] == "mora"
+        assert "score_col" in meta
+        assert "pred_col" in meta
+
+    def test_decile_analysis_shape(self):
+        rng = np.random.default_rng(42)
+        y = np.array([0] * 90 + [1] * 10)
+        p = np.concatenate([rng.uniform(0, 0.4, 90), rng.uniform(0.6, 1, 10)])
+        result = decile_analysis(y, p)
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 10
+        assert "event_rate" in result.columns
+
+    def test_decile_analysis_event_rates_valid(self):
+        rng = np.random.default_rng(1)
+        y = rng.choice([0, 1], 200, p=[0.9, 0.1])
+        p = rng.uniform(0, 1, 200)
+        result = decile_analysis(y, p)
+        assert (result["event_rate"] >= 0).all()
+        assert (result["event_rate"] <= 1).all()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  model_monitoring: get_event_metadata, compute_psi_feature
+
+class TestModelMonitoringHelpers:
+    def test_get_event_metadata_keys(self):
+        cfg = {"target": {"event_col": "mora"}}
+        meta = mon_get_event_metadata(cfg)
+        assert meta["event_col"] == "mora"
+        assert "score_col" in meta
+        assert "pred_col" in meta
+
+    def test_compute_psi_identical_distributions(self):
+        rng = np.random.default_rng(0)
+        data = rng.normal(0, 1, 500)
+        psi = compute_psi_feature(data, data)
+        assert psi < 0.05
+
+    def test_compute_psi_different_distributions(self):
+        rng = np.random.default_rng(0)
+        ref  = rng.normal(0, 1, 500)
+        prod = rng.normal(3, 1, 500)
+        psi = compute_psi_feature(ref, prod)
+        assert psi > 0.1
+
+    def test_compute_psi_returns_float(self):
+        rng = np.random.default_rng(42)
+        psi = compute_psi_feature(rng.uniform(0, 1, 100), rng.uniform(0, 1, 100))
+        assert isinstance(psi, float)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  model_deploy: funciones puras sin Flask
+
+class TestModelDeployHelpers:
+    def _cfg(self):
+        return {"target": {"event_col": "mora"}}
+
+    def _paths_cfg(self):
+        cfg_global = {"paths": {
+            "model_file":           "artifacts/best_model.joblib",
+            "model_meta_file":      "artifacts/best_model_meta.json",
+            "train_reference_file": "artifacts/train_reference.csv",
+            "logs_file":            "artifacts/prediction_logs.csv",
+            "pipeline_ml_file":     "artifacts/pipeline_ml.pkl",
+            "pipeline_base_file":   "artifacts/pipeline_base.pkl",
+            "deploy_summary_file":  "artifacts/deploy_summary.json",
+            "metrics_file":         "reports/metrics_latest.json",
+            "drift_report_file":    "reports/drift_report.csv",
+        }}
+        cfg = {"paths": {
+            "artifacts_dir": "artifacts/scoring_mora",
+            "reports_dir":   "reports/scoring_mora",
+        }}
+        return cfg_global, cfg
+
+    def test_get_event_metadata_keys(self):
+        meta = deploy_get_event_metadata(self._cfg())
+        assert meta["event_col"] == "mora"
+        assert meta["score_col"] == "score_mora"
+        assert meta["pred_col"] == "pred_mora"
+        assert meta["actual_col"] == "mora_real"
+
+    def test_resolve_runtime_paths_returns_dict(self):
+        cfg_global, cfg = self._paths_cfg()
+        paths = deploy_resolve_runtime_paths(cfg_global, cfg)
+        assert isinstance(paths, dict)
+        assert "model_file" in paths
+        assert "metrics_file" in paths
+
+    def test_resolve_runtime_paths_uses_artifacts_dir(self):
+        cfg_global, cfg = self._paths_cfg()
+        paths = deploy_resolve_runtime_paths(cfg_global, cfg)
+        assert "scoring_mora" in paths["model_file"]
+
+    def test_make_risk_classifier_bajo(self):
+        clf = _make_risk_classifier(0.3, {"bajo": 0.5, "medio": 1.0})
+        assert clf(0.1) == "Bajo"
+
+    def test_make_risk_classifier_medio(self):
+        clf = _make_risk_classifier(0.3, {"bajo": 0.5, "medio": 1.0})
+        assert clf(0.2) == "Medio"
+
+    def test_make_risk_classifier_alto(self):
+        clf = _make_risk_classifier(0.3, {"bajo": 0.5, "medio": 1.0})
+        assert clf(0.35) == "Alto"
+
+    def test_load_batch_input_from_dataframe(self):
+        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        out = _load_batch_input(df)
+        pd.testing.assert_frame_equal(out, df)
+
+    def test_load_batch_input_from_csv(self, tmp_path):
+        df = pd.DataFrame({"x": [1, 2, 3]})
+        csv_path = tmp_path / "data.csv"
+        df.to_csv(csv_path, index=False)
+        out = _load_batch_input(csv_path)
+        assert list(out.columns) == ["x"]
+        assert len(out) == 3
